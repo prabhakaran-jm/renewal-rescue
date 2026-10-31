@@ -9,7 +9,13 @@ export type StoredProposal = {
   result?: unknown;
 };
 
-const store = new Map<string, StoredProposal>();
+/** Survive Next.js dev route-chunk remounts (Propose Map ≠ first Approve Map). */
+const g = globalThis as typeof globalThis & {
+  __renewalRescueProposals?: Map<string, StoredProposal>;
+};
+const store =
+  g.__renewalRescueProposals ?? new Map<string, StoredProposal>();
+g.__renewalRescueProposals = store;
 
 export function saveProposal(
   proposal: RenewalProposal,
