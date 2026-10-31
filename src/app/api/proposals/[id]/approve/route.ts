@@ -87,6 +87,44 @@ export async function POST(_req: Request, ctx: Ctx) {
       }
       const amount = stored.proposal.impact || sub.outstanding || undefined;
       const result = await captureOutstandingAction(sub.id, amount ?? undefined);
+      // Money proof: re-GET live outstanding. Empty/async PayPal 2xx must not
+      // claim RECOVERED while balance still shows (e.g. CAPTURE_IN_PROGRESS).
+      const after = await getDeskSubscription(sub.id);
+      const outstandingAfter = after?.outstanding ?? null;
+      const cleared = (after?.outstandingValue ?? 0) <= 0;
+      const emptyOrPending =
+        result == null ||
+        (typeof result === "object" &&
+          result !== null &&
+          "status" in result &&
+          (result as { status?: string }).status === "NO_CONTENT");
+
+      if (!cleared) {
+        const next = updateProposal(id, {
+          result: {
+            kind: "capture_outstanding",
+            paypal: result,
+            amount,
+            subscriptionId: sub.id,
+            outstandingAfter,
+            verified: false,
+          },
+        });
+        return NextResponse.json(
+          {
+            ok: false,
+            error: emptyOrPending
+              ? "PayPal capture returned empty/pending body and outstanding is still > 0 — not money proof"
+              : "PayPal capture response received but outstanding balance still > 0 — not money proof",
+            deskStatus: "CAPTURE_PEND",
+            paypal: result,
+            outstandingAfter,
+            proposal: next,
+          },
+          { status: 502 }
+        );
+      }
+
       const next = updateProposal(id, {
         status: "APPROVED",
         result: {
@@ -94,6 +132,8 @@ export async function POST(_req: Request, ctx: Ctx) {
           paypal: result,
           amount,
           subscriptionId: sub.id,
+          outstandingAfter,
+          verified: true,
         },
       });
       return NextResponse.json({ ok: true, deskStatus: "RECOVERED", proposal: next });

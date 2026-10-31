@@ -103,5 +103,10 @@ export async function paypalFetch<T = unknown>(
     err.body = json;
     throw err;
   }
+  // Empty 2xx (common on async capture) must not become silent `null`
+  // that the desk can mislabel as RECOVERED money proof.
+  if (json == null && method !== "GET") {
+    return { status: "NO_CONTENT", httpStatus: res.status } as T;
+  }
   return json as T;
 }
