@@ -1,0 +1,45 @@
+{
+  "title": "Step 6 money proof — setup-fee-continue outstanding capture",
+  "timezoneNote": "Wall times below marked Europe/London; PayPal API times are Z (UTC=London on this date)",
+  "subscriptionId": "I-J8R13K0F76X4",
+  "pathKey": "setup-fee-continue",
+  "buyerEmail": "sb-l8kzh53623497@personal.example.com",
+  "trail": [
+    {
+      "step": "approve_async",
+      "note": "POST capture returned HTTP 202 empty body; desk CAPTURE_PEND; outstanding still 5.0"
+    },
+    {
+      "step": "retry_blocked",
+      "note": "HTTP 422 CAPTURE_IN_PROGRESS"
+    },
+    {
+      "step": "completed",
+      "note": "Outstanding cleared; COMPLETED txn 7RG29592AA729850V"
+    }
+  ],
+  "afterClear": {
+    "checkedAt": "2026-10-31T12:54:34.215Z",
+    "status": "SUSPENDED",
+    "outstanding": { "currency_code": "USD", "value": "0.0" },
+    "failed_payments_count": 0
+  },
+  "moneyProofTransaction": {
+    "id": "7RG29592AA729850V",
+    "status": "COMPLETED",
+    "time": "2026-10-31T12:46:47.000Z",
+    "gross_amount": { "currency_code": "USD", "value": "5.00" },
+    "fee_amount": { "currency_code": "USD", "value": "0.47" },
+    "net_amount": { "currency_code": "USD", "value": "4.53" }
+  },
+  "priorSetupFeeTransaction": {
+    "id": "8F510825CX301480C",
+    "status": "COMPLETED",
+    "time": "2026-10-31T10:21:17.000Z",
+    "gross_amount": { "currency_code": "USD", "value": "1.00" }
+  },
+  "checkDailyPostClearExcerpt": [
+    "setup-fee-continue     I-J8R13K0F76X4  status=SUSPENDED  outstanding=0.0 USD  failed=0"
+  ],
+  "relatedDailyCheckFile": "fixtures/daily-checks/2026-10-31.json"
+}

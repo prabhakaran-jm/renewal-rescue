@@ -25,11 +25,24 @@ Desk behavior:
 | Refresh | Lists 4 seeded subs via live `GET /v1/billing/subscriptions/{id}` |
 | Propose | Deterministic schema `{capture_outstanding \| revise_cheaper \| retry_later \| escalate}` + policy gate |
 | FIXTURE | When outstanding is `$0` — diagnosis only, not verified recovery |
-| Preferred capture | `I-J8R13K0F76X4` (`setup-fee-continue`) — SUSPENDED + outstanding when present |
+| Preferred capture | `I-J8R13K0F76X4` (`setup-fee-continue`) — was SUSPENDED + outstanding; see Step 6 proof below |
 | Approve | Re-checks policy; **capture only if outstanding > 0**; revise returns **buyer approve URL** (retention / next cycle) |
 | Deny / write-off demo | Policy refuses write-offs |
 
-**Do not auto-capture.** Money APIs run only after merchant Approve. Film live capture in **Step 6** — for Step 5 validation use Refresh + Propose only.
+**Do not auto-capture.** Money APIs run only after merchant Approve. Empty/async PayPal capture (HTTP 202) must **not** be labeled RECOVERED until live outstanding is cleared.
+
+### Step 6 money proof (2026-10-31)
+
+Verified on sandbox for `I-J8R13K0F76X4`:
+
+| Proof | Detail |
+| --- | --- |
+| Capture txn | **COMPLETED** `$5.00` id `7RG29592AA729850V` (12:46 Europe/London) |
+| After | `check:daily` → outstanding **0.0 USD**, failed **0**; status may stay **SUSPENDED** |
+| Trail | Approve → HTTP **202** / desk `CAPTURE_PEND` → **422** `CAPTURE_IN_PROGRESS` → cleared |
+| Artifact | [`fixtures/money-proof/I-J8R13K0F76X4-2026-10-31.json`](./fixtures/money-proof/I-J8R13K0F76X4-2026-10-31.json) |
+
+This id is **spent** for another live capture demo until a new outstanding balance appears — re-seed or wait for another failed renewal for judge Recover clicks.
 
 ### API sketch
 
