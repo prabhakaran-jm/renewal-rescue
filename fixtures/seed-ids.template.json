@@ -1,0 +1,24 @@
+{
+  "label": "Oct 30 SET UP seed — ids only, no secrets. Replace after live seed.",
+  "productId": null,
+  "plans": {
+    "standard": null,
+    "setupFee": null
+  },
+  "subscriptions": {
+    "drained-balance": null,
+    "card-removed": null,
+    "setup-fee-continue": null,
+    "drained-balance-2": null
+  },
+  "webhook": {
+    "webhookIdEnv": "PAYPAL_WEBHOOK_ID",
+    "events": [
+      "BILLING.SUBSCRIPTION.PAYMENT.FAILED",
+      "BILLING.SUBSCRIPTION.SUSPENDED",
+      "PAYMENT.SALE.COMPLETED"
+    ],
+    "moneyProof": false
+  },
+  "updatedAt": null
+}

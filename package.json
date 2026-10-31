@@ -1,0 +1,18 @@
+{
+  "name": "renewal-rescue",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Renewal Rescue — failed PayPal subscription payment recovery (Oct 30 sandbox seed)",
+  "scripts": {
+    "seed:catalog": "node scripts/seed/create-catalog.mjs",
+    "seed:plans": "node scripts/seed/create-daily-plans.mjs",
+    "seed:subs": "node scripts/seed/seed-subscriptions.mjs",
+    "seed:all": "node scripts/seed/run-oct30-setup.mjs",
+    "check:daily": "node scripts/seed/check-outstanding.mjs",
+    "webhook:dev": "node scripts/webhook/dev-listener.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
