@@ -47,8 +47,14 @@ Ids land in `fixtures/seed-ids.json` (gitignored pattern recommended once secret
 | --- | --- | --- |
 | `drained-balance` | standard (DAY $5, threshold 1) | Approve with buyer that has empty/insufficient balance + declining card |
 | `card-removed` | standard | Approve, then remove funding instrument in sandbox wallet |
-| `setup-fee-continue` | setupFee (setup_fee $1 + CONTINUE + auto_bill_outstanding + threshold 1) | Approve; let setup/renewal fail into outstanding |
+| `setup-fee-continue` | setupFee (setup_fee $1 + CONTINUE + auto_bill_outstanding + threshold 1) | **Money-proof history** `I-J8R13K0F76X4` — keep listed; do not re-use for judge capture |
 | `drained-balance-2` | standard | Optional 4th drained path |
+| `judge-demo-outstanding` | setupFee (same plan) | Step 7: drain → approve (setup fee fails) → SUSPENDED+outstanding → restore funding; **do not capture** until demo |
+
+```bash
+# Create only the judge-demo shell (keeps existing ids)
+node scripts/seed/seed-subscriptions.mjs --demo-outstanding
+```
 
 ## Nov 3 rule
 

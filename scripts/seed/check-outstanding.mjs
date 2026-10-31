@@ -42,7 +42,30 @@ async function main() {
   for (const key of keys) {
     const row = subs[key];
     if (!row?.id) continue;
-    const live = await paypalFetch(`/v1/billing/subscriptions/${row.id}`);
+    if (key.endsWith("-superseded")) continue;
+    let live;
+    try {
+      live = await paypalFetch(`/v1/billing/subscriptions/${row.id}`);
+    } catch (err) {
+      if (err.status === 404) {
+        const summary = {
+          key,
+          id: row.id,
+          status: "NOT_FOUND",
+          outstanding: null,
+          failed_payments_count: null,
+          next_billing_time: null,
+          last_payment: null,
+          error: "HTTP 404 — APPROVAL_PENDING likely expired",
+        };
+        rows.push(summary);
+        console.log(
+          `${key.padEnd(22)} ${row.id}  status=NOT_FOUND  outstanding=n/a  failed=n/a`
+        );
+        continue;
+      }
+      throw err;
+    }
     const outstanding = live.billing_info?.outstanding_balance;
     const value = outstanding ? Number(outstanding.value) : 0;
     if (value > 0) anyOutstanding = true;

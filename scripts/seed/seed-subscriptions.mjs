@@ -10,10 +10,15 @@
  *  2. card-removed     → approve then remove funding instrument in sandbox buyer wallet
  *  3. setup-fee-continue → use setupFee plan (setup_fee + CONTINUE + threshold 1)
  *  4. (optional) dual-fail → second drained buyer on standard plan
+ *  5. judge-demo-outstanding → setupFee re-seed for desk Recover demo
+ *     (drain → approve so setup fee fails → SUSPENDED+outstanding → restore funding; do NOT capture)
  *
  * Usage:
  *   npm run seed:subs
  *   node scripts/seed/seed-subscriptions.mjs --refresh
+ *   node scripts/seed/seed-subscriptions.mjs --demo-outstanding
+ *   node scripts/seed/seed-subscriptions.mjs --demo-outstanding --force
+ *     (--force replaces a stale/404 APPROVAL_PENDING shell; approve within ~3h)
  */
 
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
@@ -59,6 +64,17 @@ const BUYERS = [
     email: "buyer-drain2@example.com",
   },
 ];
+
+/** Fresh setupFee shell for judge Recover demo (keeps setup-fee-continue as money-proof history). */
+const DEMO_OUTSTANDING = {
+  key: "judge-demo-outstanding",
+  plan: "setupFee",
+  note:
+    "Judge demo re-seed: drain funding → approve (setup fee fails) → SUSPENDED+outstanding → restore funding; do NOT capture until demo",
+  given_name: "Judge",
+  surname: "Demo",
+  email: "buyer-judge-demo@example.com",
+};
 
 function loadIds() {
   if (!existsSync(IDS_PATH)) return {};
@@ -108,7 +124,24 @@ async function refreshSubscriptions(ids) {
   const subs = { ...(ids.subscriptions || {}) };
   for (const [key, row] of Object.entries(subs)) {
     if (!row?.id) continue;
-    const live = await paypalFetch(`/v1/billing/subscriptions/${row.id}`);
+    let live;
+    try {
+      live = await paypalFetch(`/v1/billing/subscriptions/${row.id}`);
+    } catch (err) {
+      if (err.status === 404) {
+        subs[key] = {
+          ...row,
+          status: "NOT_FOUND",
+          refreshedAt: new Date().toISOString(),
+          note: `${row.note || ""} [404 — APPROVAL_PENDING likely expired; re-run --demo-outstanding --force if this is judge-demo]`.trim(),
+        };
+        console.log(
+          `${key}: ${row.id} status=NOT_FOUND (HTTP 404 — shell expired / gone)`
+        );
+        continue;
+      }
+      throw err;
+    }
     const outstanding = live.billing_info?.outstanding_balance ?? null;
     subs[key] = {
       ...row,
@@ -127,9 +160,32 @@ async function refreshSubscriptions(ids) {
   return saveIds({ subscriptions: subs });
 }
 
+async function createBuyerShell(buyer, ids, subscriptions) {
+  const planId =
+    buyer.plan === "setupFee" ? ids.plans.setupFee : ids.plans.standard;
+  const sub = await createSubscription(buyer, planId);
+  const link = approveLink(sub);
+  subscriptions[buyer.key] = {
+    id: sub.id,
+    planId,
+    planKey: buyer.plan,
+    status: sub.status,
+    failurePath: buyer.key,
+    note: buyer.note,
+    approveUrl: link,
+    createdAt: new Date().toISOString(),
+  };
+  console.log(`Created ${buyer.key}: ${sub.id} status=${sub.status}`);
+  if (link) console.log(`  Approve (sandbox personal account): ${link}`);
+  console.log(`  Manual: ${buyer.note}`);
+  return { sub, link };
+}
+
 async function main() {
   requireEnv(["PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET"]);
   const refresh = process.argv.includes("--refresh");
+  const demoOutstanding = process.argv.includes("--demo-outstanding");
+  const force = process.argv.includes("--force");
   let ids = loadIds();
 
   if (!ids.plans?.standard || !ids.plans?.setupFee) {
@@ -142,28 +198,72 @@ async function main() {
 
   const subscriptions = { ...(ids.subscriptions || {}) };
 
+  if (demoOutstanding) {
+    const existing = subscriptions[DEMO_OUTSTANDING.key];
+    if (existing?.id && !force) {
+      console.log(
+        `Skip ${DEMO_OUTSTANDING.key} — already have ${existing.id} (status=${existing.status || "?"})`
+      );
+      console.log(`  Approve URL: ${existing.approveUrl || "(none)"}`);
+      console.log(
+        `  Money-proof history kept at setup-fee-continue → ${
+          subscriptions["setup-fee-continue"]?.id || "n/a"
+        }`
+      );
+      console.log(
+        "\nIf GET returns 404 / APPROVAL_PENDING expired, re-run with --force:"
+      );
+      console.log(
+        "  node scripts/seed/seed-subscriptions.mjs --demo-outstanding --force"
+      );
+      return ids;
+    }
+    if (existing?.id && force) {
+      console.log(
+        `Force-replace ${DEMO_OUTSTANDING.key}: superseding ${existing.id} (was ${existing.status || "?"})`
+      );
+      subscriptions[`${DEMO_OUTSTANDING.key}-superseded`] = {
+        ...existing,
+        supersededAt: new Date().toISOString(),
+        note: `${existing.note || ""} [superseded — APPROVAL_PENDING expired / 404]`.trim(),
+      };
+      delete subscriptions[DEMO_OUTSTANDING.key];
+    }
+    await createBuyerShell(DEMO_OUTSTANDING, ids, subscriptions);
+    ids = saveIds({
+      subscriptions,
+      preferredCaptureKey: DEMO_OUTSTANDING.key,
+      preferredCaptureId: subscriptions[DEMO_OUTSTANDING.key].id,
+    });
+    console.log("\nNext (buyer — YOU must act SOON; shell expires in ~3h if unapproved):");
+    console.log(
+      "  1. Drain sandbox personal buyer funding (balance ~0; remove/unlink good card)"
+    );
+    console.log("  2. Open the approve URL above → Agree & Subscribe");
+    console.log(
+      "  3. Expect setup fee to fail → CONTINUE → SUSPENDED + outstanding_balance > 0"
+    );
+    console.log(
+      "  4. Restore buyer funding (balance/card) WITHOUT capturing — desk Recover needs funded buyer"
+    );
+    console.log("  5. node scripts/seed/seed-subscriptions.mjs --refresh");
+    console.log(
+      `  6. Set SEED_SUBSCRIPTION_ID=${subscriptions[DEMO_OUTSTANDING.key].id} in .env`
+    );
+    console.log(
+      `  Money-proof history: setup-fee-continue → ${
+        subscriptions["setup-fee-continue"]?.id || "I-J8R13K0F76X4"
+      }`
+    );
+    return ids;
+  }
+
   for (const buyer of BUYERS) {
     if (subscriptions[buyer.key]?.id) {
       console.log(`Skip ${buyer.key} — already have ${subscriptions[buyer.key].id}`);
       continue;
     }
-    const planId =
-      buyer.plan === "setupFee" ? ids.plans.setupFee : ids.plans.standard;
-    const sub = await createSubscription(buyer, planId);
-    const link = approveLink(sub);
-    subscriptions[buyer.key] = {
-      id: sub.id,
-      planId,
-      planKey: buyer.plan,
-      status: sub.status,
-      failurePath: buyer.key,
-      note: buyer.note,
-      approveUrl: link,
-      createdAt: new Date().toISOString(),
-    };
-    console.log(`Created ${buyer.key}: ${sub.id} status=${sub.status}`);
-    if (link) console.log(`  Approve (sandbox personal account): ${link}`);
-    console.log(`  Manual: ${buyer.note}`);
+    await createBuyerShell(buyer, ids, subscriptions);
   }
 
   ids = saveIds({ subscriptions });

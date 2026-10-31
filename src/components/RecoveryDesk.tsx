@@ -41,7 +41,7 @@ type ProposalPayload = {
 export function RecoveryDesk() {
   const [subs, setSubs] = useState<DeskSub[]>([]);
   const [preferredCaptureId, setPreferredCaptureId] = useState(
-    "I-J8R13K0F76X4"
+    "I-3HK9STH33F7F"
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
