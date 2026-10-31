@@ -2,15 +2,31 @@
   "name": "renewal-rescue",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "description": "Renewal Rescue — failed PayPal subscription payment recovery (Oct 30 sandbox seed)",
+  "description": "Renewal Rescue — failed PayPal subscription payment recovery desk",
   "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test:policy": "tsx --tsconfig tsconfig.json --test tests/policy.engine.test.ts",
     "seed:catalog": "node scripts/seed/create-catalog.mjs",
     "seed:plans": "node scripts/seed/create-daily-plans.mjs",
     "seed:subs": "node scripts/seed/seed-subscriptions.mjs",
     "seed:all": "node scripts/seed/run-oct30-setup.mjs",
     "check:daily": "node scripts/seed/check-outstanding.mjs",
     "webhook:dev": "node scripts/webhook/dev-listener.mjs"
+  },
+  "dependencies": {
+    "next": "^15.5.6",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.6",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
   },
   "engines": {
     "node": ">=20"
