@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { DEFAULT_POLICY, enforcePolicy } from "@/lib/policy/engine";
 import { getProposal, updateProposal } from "@/lib/desk/proposals";
+import { appendVerifiedRecovery } from "@/lib/desk/recovered-mrr";
 import { getDeskSubscription } from "@/lib/desk/seed";
 import { captureOutstandingAction } from "@/lib/recovery/capture";
 import { reviseCheaperAction } from "@/lib/recovery/revise";
+import type { Money } from "@/types/renewal";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -125,18 +127,41 @@ export async function POST(_req: Request, ctx: Ctx) {
         );
       }
 
+      // Prefer proposal impact / pre-clear outstanding (what we recovered).
+      const amountForBoard: Money =
+        amount ||
+        sub.outstanding || {
+          currency_code: "USD",
+          value: "0.00",
+        };
+
+      const recoveredRow = appendVerifiedRecovery({
+        subscriptionId: sub.id,
+        pathKey: sub.key,
+        amount: amountForBoard,
+        paypal: result,
+        proposalId: id,
+        note: `Approve RECOVERED on ${sub.id}; outstanding cleared.`,
+      });
+
       const next = updateProposal(id, {
         status: "APPROVED",
         result: {
           kind: "capture_outstanding",
           paypal: result,
-          amount,
+          amount: amountForBoard,
           subscriptionId: sub.id,
           outstandingAfter,
           verified: true,
+          recoveredMrrId: recoveredRow.id,
         },
       });
-      return NextResponse.json({ ok: true, deskStatus: "RECOVERED", proposal: next });
+      return NextResponse.json({
+        ok: true,
+        deskStatus: "RECOVERED",
+        recovered: recoveredRow,
+        proposal: next,
+      });
     }
 
     if (action === "revise_cheaper") {

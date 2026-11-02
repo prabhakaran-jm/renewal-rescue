@@ -5,6 +5,7 @@ node_modules/
 fixtures/seed-ids.json
 fixtures/daily-checks/
 fixtures/webhook-events/
+fixtures/recovered-mrr/log.ndjson
 *.log
 .DS_Store
 .next/

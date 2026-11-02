@@ -47,12 +47,23 @@ Verified on sandbox for `I-J8R13K0F76X4` (history — not the preferred desk tar
 
 Preferred shell **`I-3HK9STH33F7F`** — live **SUSPENDED** + outstanding **5.0 USD**. `I-1Y3BCF7UX186` is superseded (ACTIVE / 0). Restore buyer funding, Refresh desk, Propose — **do not Approve/capture until filming**. Prefer `SEED_SUBSCRIPTION_ID=I-3HK9STH33F7F`. Money-proof history: `I-J8R13K0F76X4`.
 
+### Step 9B Recovered MRR + Step 9A webhooks
+
+- Desk board: verified recoveries only (`fixtures/recovered-mrr/seed.json` = txn `7RG29592AA729850V` / `$5` on `I-J8R13K0F76X4`). Approve → RECOVERED appends to `fixtures/recovered-mrr/log.ndjson`.
+- `GET /api/recovered-mrr` — board JSON
+- `POST /api/webhooks/paypal` — signature verify via PayPal + persist (needs public tunnel + `PAYPAL_WEBHOOK_ID`)
+- `GET /api/webhooks/inbox` — recent verified events for desk
+- Simulator = optional smoke only — never money proof. Do not capture live outstanding in Step 9.
+
 ### API sketch
 
 - `GET /api/subscriptions` — seed ids + live PayPal refresh
 - `POST /api/proposals` — body `{ subscriptionId?, demoWriteOff?, forceRevise? }`
-- `POST /api/proposals/:id/approve` — capture / revise / no-op
+- `POST /api/proposals/:id/approve` — capture / revise / no-op; RECOVERED appends recovered-MRR row
 - `POST /api/proposals/:id/deny`
+- `GET /api/recovered-mrr` — verified recoveries board
+- `POST /api/webhooks/paypal` — verified webhook ingest
+- `GET /api/webhooks/inbox` — desk inbox
 
 ### Validate (no live capture)
 
