@@ -164,7 +164,7 @@ export function RecoveryDesk() {
     setError(null);
     try {
       const res = await fetch(
-        `/api/proposals/${proposal.proposalId}/approve`,
+        `/api/proposals/${encodeURIComponent(proposal.proposalId)}/approve`,
         { method: "POST" }
       );
       const data = await res.json();
@@ -185,9 +185,10 @@ export function RecoveryDesk() {
 
   async function deny() {
     if (!proposal?.proposalId) return;
-    const res = await fetch(`/api/proposals/${proposal.proposalId}/deny`, {
-      method: "POST",
-    });
+    const res = await fetch(
+      `/api/proposals/${encodeURIComponent(proposal.proposalId)}/deny`,
+      { method: "POST" }
+    );
     const data = await res.json();
     if (!res.ok) {
       setError(data.error || "Deny failed");

@@ -8,18 +8,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Recovered-MRR board — seed money-proof + desk recovery log only.
- * Never invents MRR.
+ * Recovered-MRR board — live PayPal transactions (COMPLETED gross ≥ $5).
+ * Probe-informed: I-J8R13K0F76X4 → one $5 row (setup fee $1 excluded).
  */
 export async function GET() {
   try {
-    const rows = listRecoveredMrr();
+    const rows = await listRecoveredMrr();
     return NextResponse.json({
       ok: true,
       totalUsd: sumRecoveredUsd(rows),
       count: rows.length,
       rows,
-      note: "Only verified PayPal-backed recoveries (money-proof seed + Approve RECOVERED). Do not invent MRR.",
+      note: "Live subscription transactions: COMPLETED USD gross ≥ $5 only. Setup-fee $1 excluded. Failures are not listed as txn status=FAILED.",
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

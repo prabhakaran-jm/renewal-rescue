@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { DEFAULT_POLICY, enforcePolicy } from "@/lib/policy/engine";
+import {
+  captureAmountExceedsOutstanding,
+} from "@/lib/desk/proposal-token";
 import { getProposal, updateProposal } from "@/lib/desk/proposals";
 import { appendVerifiedRecovery } from "@/lib/desk/recovered-mrr";
 import { getDeskSubscription } from "@/lib/desk/seed";
@@ -13,18 +16,29 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
- * Merchant Approve → policy re-check → capture/revise.
- * Capture runs ONLY when outstanding > 0.
- * Never auto-called from list/propose — explicit Approve only.
- * Step 6 films live money proof; Step 5 wires the path.
+ * Merchant Approve → verify HMAC token → policy re-check → capture/revise.
+ * Capture uses PayPal-Request-Id = token short id.
+ * Revise has NO idempotency key — see reviseCheaperAction docs.
  */
 export async function POST(_req: Request, ctx: Ctx) {
   try {
-    const { id } = await ctx.params;
-    const stored = getProposal(id);
-    if (!stored) {
-      return NextResponse.json({ error: "Proposal not found" }, { status: 404 });
+    const { id: rawId } = await ctx.params;
+    const token = decodeURIComponent(rawId);
+    const read = getProposal(token);
+    if (!read.ok) {
+      const status =
+        read.reason === "expired"
+          ? 401
+          : read.reason === "bad_sig" || read.reason === "tampered"
+            ? 401
+            : 400;
+      return NextResponse.json(
+        { error: "Invalid proposal token", reason: read.reason },
+        { status }
+      );
     }
+    const stored = read.stored;
+
     if (!stored.policy.ok) {
       return NextResponse.json(
         {
@@ -49,24 +63,41 @@ export async function POST(_req: Request, ctx: Ctx) {
       );
     }
 
-    // Re-check policy against live outstanding
+    if (
+      captureAmountExceedsOutstanding(
+        stored.proposal,
+        sub.outstandingValue
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error: "Capture amount exceeds live outstanding",
+          reason: "amount_exceeds_outstanding",
+          outstanding: sub.outstanding,
+          impact: stored.proposal.impact,
+        },
+        { status: 400 }
+      );
+    }
+
     const policy = enforcePolicy(stored.proposal, {
       outstanding: sub.outstanding,
       currentPlanPrice: sub.currentPlanPrice,
       ...DEFAULT_POLICY,
     });
     if (!policy.ok) {
-      updateProposal(id, { status: "BLOCKED", policy });
+      const next = updateProposal(token, { status: "BLOCKED", policy });
       return NextResponse.json(
-        { error: "Policy re-check failed", reason: policy.reason },
+        { error: "Policy re-check failed", reason: policy.reason, proposal: next },
         { status: 400 }
       );
     }
 
     const action = stored.proposal.action;
+    const shortId = stored.id;
 
     if (action === "retry_later" || action === "escalate") {
-      const next = updateProposal(id, {
+      const next = updateProposal(token, {
         status: "APPROVED",
         result: {
           kind: action,
@@ -74,7 +105,11 @@ export async function POST(_req: Request, ctx: Ctx) {
           fixtureLabeled: stored.proposal.fixtureLabeled ?? true,
         },
       });
-      return NextResponse.json({ ok: true, proposal: next });
+      return NextResponse.json({
+        ok: true,
+        proposalId: next?.token,
+        proposal: next,
+      });
     }
 
     if (action === "capture_outstanding") {
@@ -88,9 +123,12 @@ export async function POST(_req: Request, ctx: Ctx) {
         );
       }
       const amount = stored.proposal.impact || sub.outstanding || undefined;
-      const result = await captureOutstandingAction(sub.id, amount ?? undefined);
-      // Money proof: re-GET live outstanding. Empty/async PayPal 2xx must not
-      // claim RECOVERED while balance still shows (e.g. CAPTURE_IN_PROGRESS).
+      const result = await captureOutstandingAction(
+        sub.id,
+        amount ?? undefined,
+        undefined,
+        { requestId: shortId }
+      );
       const after = await getDeskSubscription(sub.id);
       const outstandingAfter = after?.outstanding ?? null;
       const cleared = (after?.outstandingValue ?? 0) <= 0;
@@ -102,7 +140,7 @@ export async function POST(_req: Request, ctx: Ctx) {
           (result as { status?: string }).status === "NO_CONTENT");
 
       if (!cleared) {
-        const next = updateProposal(id, {
+        const next = updateProposal(token, {
           result: {
             kind: "capture_outstanding",
             paypal: result,
@@ -110,6 +148,7 @@ export async function POST(_req: Request, ctx: Ctx) {
             subscriptionId: sub.id,
             outstandingAfter,
             verified: false,
+            paypalRequestId: shortId,
           },
         });
         return NextResponse.json(
@@ -121,13 +160,13 @@ export async function POST(_req: Request, ctx: Ctx) {
             deskStatus: "CAPTURE_PEND",
             paypal: result,
             outstandingAfter,
+            proposalId: next?.token,
             proposal: next,
           },
           { status: 502 }
         );
       }
 
-      // Prefer proposal impact / pre-clear outstanding (what we recovered).
       const amountForBoard: Money =
         amount ||
         sub.outstanding || {
@@ -140,11 +179,11 @@ export async function POST(_req: Request, ctx: Ctx) {
         pathKey: sub.key,
         amount: amountForBoard,
         paypal: result,
-        proposalId: id,
+        proposalId: shortId,
         note: `Approve RECOVERED on ${sub.id}; outstanding cleared.`,
       });
 
-      const next = updateProposal(id, {
+      const next = updateProposal(token, {
         status: "APPROVED",
         result: {
           kind: "capture_outstanding",
@@ -154,12 +193,14 @@ export async function POST(_req: Request, ctx: Ctx) {
           outstandingAfter,
           verified: true,
           recoveredMrrId: recoveredRow.id,
+          paypalRequestId: shortId,
         },
       });
       return NextResponse.json({
         ok: true,
         deskStatus: "RECOVERED",
         recovered: recoveredRow,
+        proposalId: next?.token,
         proposal: next,
       });
     }
@@ -177,17 +218,19 @@ export async function POST(_req: Request, ctx: Ctx) {
           { status: 400 }
         );
       }
+      // No PayPal-Request-Id — revise is not idempotent.
       const { result, buyerApproveUrl } = await reviseCheaperAction(
         sub.id,
         planId
       );
-      const next = updateProposal(id, {
+      const next = updateProposal(token, {
         status: "APPROVED",
         result: {
           kind: "revise_cheaper",
           paypal: result,
           buyerApproveUrl,
           framing: "retention / next-cycle price — not recovered cash",
+          idempotency: "none — revise has no PayPal-Request-Id",
           subscriptionId: sub.id,
         },
       });
@@ -195,6 +238,7 @@ export async function POST(_req: Request, ctx: Ctx) {
         ok: true,
         deskStatus: "REVISED",
         buyerApproveUrl,
+        proposalId: next?.token,
         proposal: next,
       });
     }

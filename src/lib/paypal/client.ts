@@ -64,12 +64,20 @@ export async function paypalFetch<T = unknown>(
     method = "GET",
     body,
     prefer,
-  }: { method?: string; body?: unknown; prefer?: string } = {}
+    headers: extraHeaders,
+  }: {
+    method?: string;
+    body?: unknown;
+    prefer?: string;
+    /** Extra headers (e.g. PayPal-Request-Id). Never log secrets. */
+    headers?: Record<string, string>;
+  } = {}
 ): Promise<T> {
   const token = await getAccessToken();
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
+    ...extraHeaders,
   };
   if (prefer) headers.Prefer = prefer;
 

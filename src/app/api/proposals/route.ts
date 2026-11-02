@@ -8,8 +8,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST { subscriptionId?, demoWriteOff?, forceRevise? }
- * Defaults to preferred live capture id when outstanding path is intended.
- * Demo Deny / Propose revise stay rule-based; main Propose may use Gemini.
+ * Returns HMAC-signed proposalId (Vercel-safe). Requires PROPOSAL_SIGNING_SECRET.
  */
 export async function POST(req: Request) {
   try {
@@ -37,8 +36,10 @@ export async function POST(req: Request) {
     const stored = saveProposal(proposal, policy);
 
     return NextResponse.json({
-      proposalId: stored.id,
+      proposalId: stored.token,
+      requestId: stored.id,
       status: stored.status,
+      expiresAt: stored.expiresAt,
       subscription: {
         id: sub.id,
         key: sub.key,
@@ -54,6 +55,7 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = message.includes("PROPOSAL_SIGNING_SECRET") ? 503 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

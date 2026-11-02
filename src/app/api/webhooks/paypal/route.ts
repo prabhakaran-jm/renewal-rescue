@@ -81,33 +81,48 @@ export async function POST(req: Request) {
   };
   const eventId = event.id ?? null;
   const eventType = event.event_type ?? null;
-  const duplicate = hasSeenEvent(eventId);
-  const interesting = eventType ? INTERESTING_EVENTS.has(eventType) : false;
 
-  const record = appendWebhookEvent({
-    receivedAt: new Date().toISOString(),
-    transmissionId: headers["paypal-transmission-id"] ?? null,
-    eventId,
-    eventType,
-    resourceId: extractResourceId(body),
-    duplicate,
-    verification: "SUCCESS",
-    interesting,
-    moneyProof: false,
-    note: "Verified signature stored — Simulator OK for smoke only; Billing GET outstanding is the DECIDE / money signal",
-    summary: {
-      event_type: eventType,
-      resource_id: extractResourceId(body),
-    },
-  });
+  // After signature verify: never 500 on inbox persistence failures.
+  try {
+    const duplicate = hasSeenEvent(eventId);
+    const interesting = eventType ? INTERESTING_EVENTS.has(eventType) : false;
 
-  return NextResponse.json({
-    ok: true,
-    duplicate,
-    interesting,
-    moneyProof: false,
-    eventId,
-    eventType,
-    stored: record,
-  });
+    const record = appendWebhookEvent({
+      receivedAt: new Date().toISOString(),
+      transmissionId: headers["paypal-transmission-id"] ?? null,
+      eventId,
+      eventType,
+      resourceId: extractResourceId(body),
+      duplicate,
+      verification: "SUCCESS",
+      interesting,
+      moneyProof: false,
+      note: "Verified signature stored — Simulator OK for smoke only; Billing GET outstanding is the DECIDE / money signal",
+      summary: {
+        event_type: eventType,
+        resource_id: extractResourceId(body),
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      duplicate,
+      interesting,
+      moneyProof: false,
+      eventId,
+      eventType,
+      stored: record,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Inbox persist failed";
+    return NextResponse.json({
+      ok: true,
+      verified: true,
+      moneyProof: false,
+      eventId,
+      eventType,
+      inboxError: message,
+      note: "Signature verified; inbox write failed — acknowledged so PayPal does not retry forever",
+    });
+  }
 }
