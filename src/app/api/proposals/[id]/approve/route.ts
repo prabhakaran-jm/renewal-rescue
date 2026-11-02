@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { DEFAULT_POLICY, enforcePolicy } from "@/lib/policy/engine";
 import {
+  checkDemoPasscode,
+  extractPasscode,
+} from "@/lib/desk/passcode";
+import {
   captureAmountExceedsOutstanding,
 } from "@/lib/desk/proposal-token";
 import { getProposal, updateProposal } from "@/lib/desk/proposals";
@@ -16,12 +20,31 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
- * Merchant Approve → verify HMAC token → policy re-check → capture/revise.
+ * Merchant Approve → DEMO_PASSCODE → verify HMAC token → policy → capture/revise.
  * Capture uses PayPal-Request-Id = token short id.
  * Revise has NO idempotency key — see reviseCheaperAction docs.
  */
-export async function POST(_req: Request, ctx: Ctx) {
+export async function POST(req: Request, ctx: Ctx) {
   try {
+    const body = (await req.json().catch(() => ({}))) as {
+      passcode?: string;
+    };
+    const pass = checkDemoPasscode(
+      extractPasscode(body, req.headers.get("x-demo-passcode"))
+    );
+    if (!pass.ok) {
+      if (pass.reason === "missing_env") {
+        return NextResponse.json(
+          { error: "DEMO_PASSCODE not configured", reason: pass.reason },
+          { status: 503 }
+        );
+      }
+      return NextResponse.json(
+        { error: "Invalid demo passcode", reason: pass.reason },
+        { status: 401 }
+      );
+    }
+
     const { id: rawId } = await ctx.params;
     const token = decodeURIComponent(rawId);
     const read = getProposal(token);

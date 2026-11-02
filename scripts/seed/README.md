@@ -54,6 +54,20 @@ Ids land in `fixtures/seed-ids.json` (gitignored pattern recommended once secret
 ```bash
 # Create only the judge-demo shell (keeps existing ids)
 node scripts/seed/seed-subscriptions.mjs --demo-outstanding
+
+## Step 3 — four outstanding setupFee shells
+
+```bash
+npm run seed:outstanding-batch
+# or force-replace stale APPROVAL_PENDING shells:
+node scripts/seed/seed-subscriptions.mjs --outstanding-batch --force
+```
+
+Keys: `outstanding-smoke`, `outstanding-film`, `outstanding-judge-1`, `outstanding-judge-2`.
+
+**Interactive (required for outstanding > 0):** for each approve URL — drain sandbox buyer → Agree & Subscribe → expect SUSPENDED + outstanding → restore funding without capturing → `--refresh` + `npm run check:daily`. Paste printed `SEED_SUBSCRIPTION_IDS` into `.env` / Vercel. Budget: smoke ≤1, film ≤1, leave ≥2 for judges.
+
+Also set `DEMO_PASSCODE` (Approve/Deny use `timingSafeEqual`; never commit/log the value).
 ```
 
 ## Nov 3 rule
