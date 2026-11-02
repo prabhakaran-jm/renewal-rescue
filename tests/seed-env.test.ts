@@ -1,24 +1,61 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { resolveSeedSubscriptionEntries } from "../src/lib/desk/seed.ts";
+import {
+  preferredCaptureId,
+  resolveSeedSubscriptionEntries,
+  sanitizePaypalSubscriptionId,
+} from "../src/lib/desk/seed.ts";
 
-describe("resolveSeedSubscriptionEntries (Vercel env-only)", () => {
-  const prev = process.env.SEED_SUBSCRIPTION_IDS;
-
-  before(() => {
-    process.env.SEED_SUBSCRIPTION_IDS =
-      "I-CNCX69GD2UD8,I-3FSFGWWRAV4D,I-J8R13K0F76X4";
+describe("sanitizePaypalSubscriptionId", () => {
+  it("accepts bare I- ids", () => {
+    assert.equal(sanitizePaypalSubscriptionId("I-CNCX69GD2UD8"), "I-CNCX69GD2UD8");
   });
 
+  it("strips accidental KEY= prefix", () => {
+    assert.equal(
+      sanitizePaypalSubscriptionId("SEED_SUBSCRIPTION_ID=I-CNCX69GD2UD8"),
+      "I-CNCX69GD2UD8"
+    );
+  });
+
+  it("rejects non I- values", () => {
+    assert.equal(sanitizePaypalSubscriptionId("not-an-id"), null);
+    assert.equal(sanitizePaypalSubscriptionId("SEED_SUBSCRIPTION_IDS"), null);
+  });
+});
+
+describe("resolveSeedSubscriptionEntries (Vercel env-only)", () => {
+  const prevIds = process.env.SEED_SUBSCRIPTION_IDS;
+  const prevId = process.env.SEED_SUBSCRIPTION_ID;
+
   after(() => {
-    if (prev === undefined) delete process.env.SEED_SUBSCRIPTION_IDS;
-    else process.env.SEED_SUBSCRIPTION_IDS = prev;
+    if (prevIds === undefined) delete process.env.SEED_SUBSCRIPTION_IDS;
+    else process.env.SEED_SUBSCRIPTION_IDS = prevIds;
+    if (prevId === undefined) delete process.env.SEED_SUBSCRIPTION_ID;
+    else process.env.SEED_SUBSCRIPTION_ID = prevId;
   });
 
   it("does not throw when fixture file is unused / env IDs set", () => {
+    process.env.SEED_SUBSCRIPTION_IDS =
+      "I-CNCX69GD2UD8,I-3FSFGWWRAV4D,I-J8R13K0F76X4";
     const entries = resolveSeedSubscriptionEntries();
     assert.equal(entries.length, 3);
     assert.equal(entries[0].row.id, "I-CNCX69GD2UD8");
-    assert.ok(entries.some((e) => e.key === "outstanding-film" || e.row.id === "I-CNCX69GD2UD8"));
+  });
+
+  it("strips KEY= pasted into SEED_SUBSCRIPTION_IDS value", () => {
+    process.env.SEED_SUBSCRIPTION_IDS =
+      "SEED_SUBSCRIPTION_IDS=I-3FSFGWWRAV4D,I-CNCX69GD2UD8";
+    const entries = resolveSeedSubscriptionEntries();
+    assert.deepEqual(
+      entries.map((e) => e.row.id),
+      ["I-3FSFGWWRAV4D", "I-CNCX69GD2UD8"]
+    );
+  });
+
+  it("preferredCaptureId strips KEY= paste", () => {
+    process.env.SEED_SUBSCRIPTION_ID =
+      "SEED_SUBSCRIPTION_ID=I-CNCX69GD2UD8";
+    assert.equal(preferredCaptureId(), "I-CNCX69GD2UD8");
   });
 });
