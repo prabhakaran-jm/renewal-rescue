@@ -65,7 +65,13 @@ node scripts/seed/seed-subscriptions.mjs --outstanding-batch --force
 
 Keys: `outstanding-smoke`, `outstanding-film`, `outstanding-judge-1`, `outstanding-judge-2`.
 
-**Interactive (required for outstanding > 0):** for each approve URL — drain sandbox buyer → Agree & Subscribe → expect SUSPENDED + outstanding → restore funding without capturing → `--refresh` + `npm run check:daily`. Paste printed `SEED_SUBSCRIPTION_IDS` into `.env` / Vercel. Budget: smoke ≤1, film ≤1, leave ≥2 for judges.
+**Interactive (required for SUSPENDED + ~$5 outstanding):**
+
+1. **Drain first** (before opening any BA link): sandbox **Personal** buyer balance ~$0; remove working cards. Optional: add only declining test card `4556747948786484` (CCREJECT).
+2. Then open each approve URL → Agree & Subscribe.
+3. Expect **SUSPENDED + outstanding ≈ $5** (setup fee fails → CONTINUE). Approving while funded → ACTIVE / $0–$1 (wrong outcome — re-run `--outstanding-batch --force`).
+4. Restore funding without capturing → `--refresh` + `npm run check:daily`.
+5. Paste printed `SEED_SUBSCRIPTION_IDS` into `.env` / Vercel. Budget: smoke ≤1, film ≤1, leave ≥2 for judges.
 
 Also set `DEMO_PASSCODE` (Approve/Deny use `timingSafeEqual`; never commit/log the value).
 ```

@@ -290,11 +290,13 @@ async function main() {
     });
     printSeedSubscriptionIdsHint(subscriptions);
     console.log("\nNext (interactive — each shell expires ~3h if unapproved):");
+    console.log("  CRITICAL: Drain FIRST. Approving while funded → ACTIVE / $0 or $1, not SUSPENDED+$5.");
     console.log("  For EACH of the four approve URLs above:");
-    console.log("    1. Drain sandbox personal buyer (balance ~0; remove good card)");
-    console.log("    2. Open approve URL → Agree & Subscribe");
-    console.log("    3. Expect setup fee fail → SUSPENDED + outstanding > 0");
-    console.log("    4. Restore funding WITHOUT capturing");
+    console.log("    1. Sandbox PERSONAL buyer — balance ~$0; remove good cards");
+    console.log("    2. Optional: add only CCREJECT test card 4556747948786484 (declines)");
+    console.log("    3. THEN open approve URL → Agree & Subscribe");
+    console.log("    4. Expect setup fee fail → SUSPENDED + outstanding (~plan $5), not ACTIVE/$0");
+    console.log("    5. Restore funding WITHOUT capturing on the desk");
     console.log("  Then: node scripts/seed/seed-subscriptions.mjs --refresh");
     console.log("        npm run check:daily");
     console.log("  Paste SEED_SUBSCRIPTION_IDS into .env / Vercel (see hint above).");
