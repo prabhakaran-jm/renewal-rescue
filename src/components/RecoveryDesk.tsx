@@ -29,6 +29,12 @@ type ProposalPayload = {
     fixtureLabeled?: boolean;
   };
   policy: { ok: true } | { ok: false; reason: string };
+  ai?: {
+    source: "gemini" | "fallback";
+    model: string;
+    reason?: string;
+  };
+  customerMessage?: string | null;
   subscription?: {
     id: string;
     status: string;
@@ -353,6 +359,14 @@ export function RecoveryDesk() {
             ) : (
               <span className="badge live">LIVE candidate</span>
             )}{" "}
+            {proposal.ai?.source === "gemini" ? (
+              <span className="badge live">Gemini</span>
+            ) : (
+              <span className="badge warn">
+                Fallback
+                {proposal.ai?.reason ? ` · ${proposal.ai.reason}` : ""}
+              </span>
+            )}{" "}
             · {proposal.status}
           </h2>
           <div className="meta">
@@ -371,6 +385,11 @@ export function RecoveryDesk() {
           <p className="sub" style={{ marginBottom: 0 }}>
             {proposal.proposal.rationale}
           </p>
+          {proposal.customerMessage ? (
+            <p className="sub" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
+              <strong>Customer draft:</strong> {proposal.customerMessage}
+            </p>
+          ) : null}
           <div className="toolbar" style={{ marginTop: "0.75rem" }}>
             <button
               type="button"
