@@ -19,6 +19,9 @@
  *   node scripts/seed/seed-subscriptions.mjs --demo-outstanding
  *   node scripts/seed/seed-subscriptions.mjs --demo-outstanding --force
  *     (--force replaces a stale/404 APPROVAL_PENDING shell; approve within ~3h)
+ *   node scripts/seed/seed-subscriptions.mjs --outstanding-batch
+ *   node scripts/seed/seed-subscriptions.mjs --outstanding-batch --force
+ *     (create four setupFee shells for Step 3; interactive drain→approve each)
  */
 
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
@@ -75,6 +78,62 @@ const DEMO_OUTSTANDING = {
   surname: "Demo",
   email: "buyer-judge-demo@example.com",
 };
+
+/**
+ * Step 3: four setupFee outstanding shells.
+ * Roles: vercel-smoke may spend 1, film 1, leave ≥2 for judges.
+ */
+const OUTSTANDING_BATCH = [
+  {
+    key: "outstanding-smoke",
+    plan: "setupFee",
+    note: "Step3 shell A — Vercel money-safe smoke spare (prefer wrong-passcode before live capture)",
+    given_name: "Smoke",
+    surname: "Outstanding",
+    email: "buyer-outstanding-smoke@example.com",
+  },
+  {
+    key: "outstanding-film",
+    plan: "setupFee",
+    note: "Step3 shell B — film Deny→Propose→Approve capture",
+    given_name: "Film",
+    surname: "Outstanding",
+    email: "buyer-outstanding-film@example.com",
+  },
+  {
+    key: "outstanding-judge-1",
+    plan: "setupFee",
+    note: "Step3 shell C — leave for judges (do not capture in smoke/film)",
+    given_name: "Judge",
+    surname: "One",
+    email: "buyer-outstanding-j1@example.com",
+  },
+  {
+    key: "outstanding-judge-2",
+    plan: "setupFee",
+    note: "Step3 shell D — leave for judges (do not capture in smoke/film)",
+    given_name: "Judge",
+    surname: "Two",
+    email: "buyer-outstanding-j2@example.com",
+  },
+];
+
+function printSeedSubscriptionIdsHint(subscriptions) {
+  const batchIds = OUTSTANDING_BATCH.map((b) => subscriptions[b.key]?.id).filter(
+    Boolean
+  );
+  const moneyProof = subscriptions["setup-fee-continue"]?.id || "I-J8R13K0F76X4";
+  const preferred =
+    batchIds[1] ||
+    batchIds[0] ||
+    subscriptions["judge-demo-outstanding"]?.id ||
+    "";
+  const all = [...batchIds];
+  if (!all.includes(moneyProof)) all.push(moneyProof);
+  console.log("\nEnv hints (never commit real secrets):");
+  console.log(`  SEED_SUBSCRIPTION_IDS=${all.join(",")}`);
+  if (preferred) console.log(`  SEED_SUBSCRIPTION_ID=${preferred}`);
+}
 
 function loadIds() {
   if (!existsSync(IDS_PATH)) return {};
@@ -185,6 +244,7 @@ async function main() {
   requireEnv(["PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET"]);
   const refresh = process.argv.includes("--refresh");
   const demoOutstanding = process.argv.includes("--demo-outstanding");
+  const outstandingBatch = process.argv.includes("--outstanding-batch");
   const force = process.argv.includes("--force");
   let ids = loadIds();
 
@@ -197,6 +257,52 @@ async function main() {
   }
 
   const subscriptions = { ...(ids.subscriptions || {}) };
+
+  if (outstandingBatch) {
+    for (const buyer of OUTSTANDING_BATCH) {
+      const existing = subscriptions[buyer.key];
+      if (existing?.id && !force) {
+        console.log(
+          `Skip ${buyer.key} — already have ${existing.id} (status=${existing.status || "?"})`
+        );
+        console.log(`  Approve URL: ${existing.approveUrl || "(none)"}`);
+        continue;
+      }
+      if (existing?.id && force) {
+        console.log(
+          `Force-replace ${buyer.key}: superseding ${existing.id} (was ${existing.status || "?"})`
+        );
+        subscriptions[`${buyer.key}-superseded`] = {
+          ...existing,
+          supersededAt: new Date().toISOString(),
+          note: `${existing.note || ""} [superseded]`.trim(),
+        };
+        delete subscriptions[buyer.key];
+      }
+      await createBuyerShell(buyer, ids, subscriptions);
+    }
+    const preferredKey = "outstanding-film";
+    ids = saveIds({
+      subscriptions,
+      preferredCaptureKey: preferredKey,
+      preferredCaptureId: subscriptions[preferredKey]?.id,
+      outstandingBatchKeys: OUTSTANDING_BATCH.map((b) => b.key),
+    });
+    printSeedSubscriptionIdsHint(subscriptions);
+    console.log("\nNext (interactive — each shell expires ~3h if unapproved):");
+    console.log("  CRITICAL: Drain FIRST. Approving while funded → ACTIVE / $0 or $1, not SUSPENDED+$5.");
+    console.log("  For EACH of the four approve URLs above:");
+    console.log("    1. Sandbox PERSONAL buyer — balance ~$0; remove good cards");
+    console.log("    2. Optional: add only CCREJECT test card 4556747948786484 (declines)");
+    console.log("    3. THEN open approve URL → Agree & Subscribe");
+    console.log("    4. Expect setup fee fail → SUSPENDED + outstanding (~plan $5), not ACTIVE/$0");
+    console.log("    5. Restore funding WITHOUT capturing on the desk");
+    console.log("  Then: node scripts/seed/seed-subscriptions.mjs --refresh");
+    console.log("        npm run check:daily");
+    console.log("  Paste SEED_SUBSCRIPTION_IDS into .env / Vercel (see hint above).");
+    console.log("  Budget: smoke≤1, film≤1, leave ≥2 for judges.");
+    return ids;
+  }
 
   if (demoOutstanding) {
     const existing = subscriptions[DEMO_OUTSTANDING.key];

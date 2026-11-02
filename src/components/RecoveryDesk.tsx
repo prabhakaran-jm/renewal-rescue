@@ -78,6 +78,7 @@ export function RecoveryDesk() {
   const [proposal, setProposal] = useState<ProposalPayload | null>(null);
   const [approveBusy, setApproveBusy] = useState(false);
   const [approveResult, setApproveResult] = useState<unknown>(null);
+  const [demoPasscode, setDemoPasscode] = useState("");
   const [recovered, setRecovered] = useState<RecoveredRow[]>([]);
   const [recoveredTotal, setRecoveredTotal] = useState(0);
   const [webhookInbox, setWebhookInbox] = useState<WebhookInboxRow[]>([]);
@@ -165,7 +166,14 @@ export function RecoveryDesk() {
     try {
       const res = await fetch(
         `/api/proposals/${encodeURIComponent(proposal.proposalId)}/approve`,
-        { method: "POST" }
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-demo-passcode": demoPasscode,
+          },
+          body: JSON.stringify({ passcode: demoPasscode }),
+        }
       );
       const data = await res.json();
       if (!res.ok) {
@@ -187,7 +195,14 @@ export function RecoveryDesk() {
     if (!proposal?.proposalId) return;
     const res = await fetch(
       `/api/proposals/${encodeURIComponent(proposal.proposalId)}/deny`,
-      { method: "POST" }
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-demo-passcode": demoPasscode,
+        },
+        body: JSON.stringify({ passcode: demoPasscode }),
+      }
     );
     const data = await res.json();
     if (!res.ok) {
@@ -391,6 +406,17 @@ export function RecoveryDesk() {
               <strong>Customer draft:</strong> {proposal.customerMessage}
             </p>
           ) : null}
+          <label className="sub" style={{ display: "block", marginTop: "0.75rem" }}>
+            Demo passcode{" "}
+            <input
+              type="password"
+              autoComplete="off"
+              value={demoPasscode}
+              onChange={(e) => setDemoPasscode(e.target.value)}
+              placeholder="DEMO_PASSCODE"
+              style={{ marginLeft: "0.5rem" }}
+            />
+          </label>
           <div className="toolbar" style={{ marginTop: "0.75rem" }}>
             <button
               type="button"

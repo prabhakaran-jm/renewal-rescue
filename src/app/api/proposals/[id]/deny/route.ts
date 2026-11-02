@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  checkDemoPasscode,
+  extractPasscode,
+} from "@/lib/desk/passcode";
 import { getProposal, updateProposal } from "@/lib/desk/proposals";
 
 export const runtime = "nodejs";
@@ -6,8 +10,25 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-/** Merchant Deny — verify HMAC token; no money API. */
-export async function POST(_req: Request, ctx: Ctx) {
+/** Merchant Deny — DEMO_PASSCODE + HMAC token; no money API. */
+export async function POST(req: Request, ctx: Ctx) {
+  const body = (await req.json().catch(() => ({}))) as { passcode?: string };
+  const pass = checkDemoPasscode(
+    extractPasscode(body, req.headers.get("x-demo-passcode"))
+  );
+  if (!pass.ok) {
+    if (pass.reason === "missing_env") {
+      return NextResponse.json(
+        { error: "DEMO_PASSCODE not configured", reason: pass.reason },
+        { status: 503 }
+      );
+    }
+    return NextResponse.json(
+      { error: "Invalid demo passcode", reason: pass.reason },
+      { status: 401 }
+    );
+  }
+
   const { id: rawId } = await ctx.params;
   const token = decodeURIComponent(rawId);
   const read = getProposal(token);
