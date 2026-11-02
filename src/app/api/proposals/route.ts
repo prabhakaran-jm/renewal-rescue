@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 /**
  * POST { subscriptionId?, demoWriteOff?, forceRevise? }
  * Defaults to preferred live capture id when outstanding path is intended.
+ * Demo Deny / Propose revise stay rule-based; main Propose may use Gemini.
  */
 export async function POST(req: Request) {
   try {
@@ -28,10 +29,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const { proposal, policy } = proposeForSubscription(sub, {
-      demoWriteOff: Boolean(body.demoWriteOff),
-      forceRevise: Boolean(body.forceRevise),
-    });
+    const { proposal, policy, ai, customerMessage } =
+      await proposeForSubscription(sub, {
+        demoWriteOff: Boolean(body.demoWriteOff),
+        forceRevise: Boolean(body.forceRevise),
+      });
     const stored = saveProposal(proposal, policy);
 
     return NextResponse.json({
@@ -47,6 +49,8 @@ export async function POST(req: Request) {
       },
       proposal: stored.proposal,
       policy: stored.policy,
+      ai,
+      customerMessage: customerMessage ?? null,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
