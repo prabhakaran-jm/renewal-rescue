@@ -8,19 +8,18 @@ const PREFERRED_CAPTURE_ID =
 
 const DEFAULT_PLAN_PRICE: Money = { currency_code: "USD", value: "5.00" };
 
+type SeedSubRow = {
+  id: string;
+  planId?: string;
+  planKey?: string;
+  failurePath?: string;
+  note?: string;
+  status?: string;
+};
+
 type SeedFile = {
   plans?: Record<string, string>;
-  subscriptions?: Record<
-    string,
-    {
-      id: string;
-      planId?: string;
-      planKey?: string;
-      failurePath?: string;
-      note?: string;
-      status?: string;
-    }
-  >;
+  subscriptions?: Record<string, SeedSubRow>;
 };
 
 export function loadSeedIds(): SeedFile {
@@ -33,27 +32,83 @@ export function loadSeedIds(): SeedFile {
   return JSON.parse(readFileSync(path, "utf8")) as SeedFile;
 }
 
+/**
+ * Env override: comma-separated subscription IDs for the desk (Vercel-safe).
+ * Falls back to fixtures/seed-ids.json keys when unset.
+ */
+export function resolveSeedSubscriptionEntries(): Array<{
+  key: string;
+  row: SeedSubRow;
+}> {
+  const file = loadSeedIds();
+  const subs = file.subscriptions || {};
+  const envRaw = process.env.SEED_SUBSCRIPTION_IDS?.trim();
+  if (envRaw) {
+    const ids = envRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return ids.map((id) => {
+      const found = Object.entries(subs).find(([, row]) => row?.id === id);
+      if (found) {
+        return { key: found[0], row: found[1] };
+      }
+      return {
+        key: id,
+        row: {
+          id,
+          planKey: "env",
+          failurePath: "env-seed",
+          note: "From SEED_SUBSCRIPTION_IDS",
+        },
+      };
+    });
+  }
+
+  return Object.entries(subs)
+    .filter(
+      ([key, row]) =>
+        Boolean(row?.id) &&
+        !key.endsWith("-superseded") &&
+        row.status !== "NOT_FOUND"
+    )
+    .map(([key, row]) => ({ key, row }));
+}
+
+/** IDs to probe for recovered-MRR (env list or preferred money-proof + preferred capture). */
+export function recoveredMrrSubscriptionIds(): string[] {
+  const envRaw = process.env.SEED_SUBSCRIPTION_IDS?.trim();
+  if (envRaw) {
+    return envRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  const entries = resolveSeedSubscriptionEntries();
+  const ids = entries.map((e) => e.row.id);
+  // Always include money-proof history sub when using fixture seeds
+  if (!ids.includes("I-J8R13K0F76X4")) ids.push("I-J8R13K0F76X4");
+  return [...new Set(ids)];
+}
+
 export function preferredCaptureId() {
   return PREFERRED_CAPTURE_ID;
 }
 
-/** List 4 seeded subs with live PayPal Billing GET refresh. */
+/** List seeded subs with live PayPal Billing GET refresh. */
 export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
-  const ids = loadSeedIds();
-  const subs = ids.subscriptions || {};
-  const keys = Object.keys(subs);
-  if (keys.length < 1) {
-    throw new Error("No subscriptions in fixtures/seed-ids.json");
+  const entries = resolveSeedSubscriptionEntries();
+  if (entries.length < 1) {
+    throw new Error(
+      "No subscriptions — set SEED_SUBSCRIPTION_IDS or fixtures/seed-ids.json"
+    );
   }
 
   const refreshedAt = new Date().toISOString();
   const rows: DeskSubscription[] = [];
 
-  for (const key of keys) {
-    const row = subs[key];
+  for (const { key, row } of entries) {
     if (!row?.id) continue;
-    // Skip expired APPROVAL_PENDING shells kept only as history
-    if (key.endsWith("-superseded") || row.status === "NOT_FOUND") continue;
     let live;
     try {
       live = await getSubscription(row.id);
@@ -92,7 +147,6 @@ export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
     });
   }
 
-  // Prefer live outstanding / preferred capture id at top of desk
   rows.sort((a, b) => {
     if (a.preferredCaptureTarget !== b.preferredCaptureTarget) {
       return a.preferredCaptureTarget ? -1 : 1;

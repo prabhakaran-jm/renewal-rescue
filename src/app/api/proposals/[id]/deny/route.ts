@@ -6,14 +6,25 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-/** Merchant Deny — no money API. */
+/** Merchant Deny — verify HMAC token; no money API. */
 export async function POST(_req: Request, ctx: Ctx) {
-  const { id } = await ctx.params;
-  const stored = getProposal(id);
-  if (!stored) {
-    return NextResponse.json({ error: "Proposal not found" }, { status: 404 });
+  const { id: rawId } = await ctx.params;
+  const token = decodeURIComponent(rawId);
+  const read = getProposal(token);
+  if (!read.ok) {
+    const status =
+      read.reason === "expired" ||
+      read.reason === "bad_sig" ||
+      read.reason === "tampered"
+        ? 401
+        : 400;
+    return NextResponse.json(
+      { error: "Invalid proposal token", reason: read.reason },
+      { status }
+    );
   }
-  const next = updateProposal(id, {
+  const stored = read.stored;
+  const next = updateProposal(token, {
     status: "DENIED",
     result: {
       reason: !stored.policy.ok
@@ -21,5 +32,9 @@ export async function POST(_req: Request, ctx: Ctx) {
         : "Merchant denied proposal",
     },
   });
-  return NextResponse.json({ ok: true, proposal: next });
+  return NextResponse.json({
+    ok: true,
+    proposalId: next?.token,
+    proposal: next,
+  });
 }

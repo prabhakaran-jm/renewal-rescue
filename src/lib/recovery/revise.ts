@@ -1,17 +1,18 @@
 import { reviseSubscription } from "@/lib/paypal/billing";
 
 /**
- * Revise cheaper → retention / next-cycle price. Returns buyer approve URL.
+ * Retention revise — buyer must approve the new plan.
  * Not recovered cash.
+ *
+ * IDEMPOTENCY NOTE: PayPal revise has no idempotency key / PayPal-Request-Id.
+ * Re-calling Approve on a revise proposal may create another revise flow.
+ * Only capture_outstanding uses PayPal-Request-Id (= proposal token short id).
  */
 export async function reviseCheaperAction(
   subscriptionId: string,
-  cheaperPlanId: string
+  planId: string
 ) {
-  const result = await reviseSubscription(subscriptionId, cheaperPlanId);
-  const approve = result.links?.find((l) => l.rel === "approve");
-  return {
-    result,
-    buyerApproveUrl: approve?.href ?? null,
-  };
+  const result = await reviseSubscription(subscriptionId, planId);
+  const buyerApproveUrl = result.links?.find((l) => l.rel === "approve")?.href;
+  return { result, buyerApproveUrl: buyerApproveUrl || null };
 }
