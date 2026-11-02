@@ -38,10 +38,33 @@ type ProposalPayload = {
   };
 };
 
+type RecoveredRow = {
+  id: string;
+  subscriptionId: string;
+  pathKey?: string;
+  amountRecovered: Money;
+  transactionId: string | null;
+  transactionStatus: string | null;
+  recoveredAt: string;
+  source: string;
+  note?: string;
+};
+
+type WebhookInboxRow = {
+  receivedAt: string;
+  eventId: string | null;
+  eventType: string | null;
+  resourceId: string | null;
+  duplicate: boolean;
+  verification: string;
+  interesting: boolean;
+  moneyProof: false;
+};
+
 export function RecoveryDesk() {
   const [subs, setSubs] = useState<DeskSub[]>([]);
   const [preferredCaptureId, setPreferredCaptureId] = useState(
-    "I-J8R13K0F76X4"
+    "I-3HK9STH33F7F"
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +72,29 @@ export function RecoveryDesk() {
   const [proposal, setProposal] = useState<ProposalPayload | null>(null);
   const [approveBusy, setApproveBusy] = useState(false);
   const [approveResult, setApproveResult] = useState<unknown>(null);
+  const [recovered, setRecovered] = useState<RecoveredRow[]>([]);
+  const [recoveredTotal, setRecoveredTotal] = useState(0);
+  const [webhookInbox, setWebhookInbox] = useState<WebhookInboxRow[]>([]);
+
+  const refreshBoards = useCallback(async () => {
+    try {
+      const [mrrRes, whRes] = await Promise.all([
+        fetch("/api/recovered-mrr", { cache: "no-store" }),
+        fetch("/api/webhooks/inbox", { cache: "no-store" }),
+      ]);
+      const mrr = await mrrRes.json();
+      if (mrrRes.ok) {
+        setRecovered(mrr.rows || []);
+        setRecoveredTotal(typeof mrr.totalUsd === "number" ? mrr.totalUsd : 0);
+      }
+      const wh = await whRes.json();
+      if (whRes.ok) {
+        setWebhookInbox(wh.events || []);
+      }
+    } catch {
+      /* boards are secondary — don't block desk */
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -66,12 +112,13 @@ export function RecoveryDesk() {
           (s) => s.preferredCaptureTarget
         ) || (data.subscriptions as DeskSub[] | undefined)?.[0];
       if (preferred && !selectedId) setSelectedId(preferred.id);
+      await refreshBoards();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Refresh failed");
     } finally {
       setLoading(false);
     }
-  }, [selectedId]);
+  }, [selectedId, refreshBoards]);
 
   useEffect(() => {
     void refresh();
@@ -122,6 +169,7 @@ export function RecoveryDesk() {
       }
       setApproveResult(data);
       await refresh();
+      await refreshBoards();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Approve failed");
     } finally {
@@ -154,9 +202,72 @@ export function RecoveryDesk() {
       </p>
 
       <div className="banner">
-        Step 5 wires Approve → capture/revise. Do not click Approve on a live
-        capture until Step 6 (filmed money proof). List + Propose are safe.
+        Step 9B board shows verified recoveries only (money-proof seed + Approve
+        RECOVERED). Do not Approve live capture on{" "}
+        <code>{preferredCaptureId}</code> until filming (Step PP-26). List +
+        Propose are safe. Webhooks Simulator is never money proof.
       </div>
+
+      <section className="panel">
+        <h2>
+          Recovered MRR{" "}
+          <span className="badge live">
+            ${recoveredTotal.toFixed(2)} USD verified
+          </span>
+        </h2>
+        <p className="sub" style={{ marginBottom: "0.75rem" }}>
+          Real PayPal-backed rows only. Seed: txn{" "}
+          <code>7RG29592AA729850V</code> on <code>I-J8R13K0F76X4</code>. Future
+          Approve → RECOVERED (outstanding cleared) appends here — e.g.{" "}
+          <code>I-3HK9STH33F7F</code> when filmed.
+        </p>
+        {recovered.length === 0 ? (
+          <p className="sub">No verified recoveries yet.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Subscription</th>
+                  <th>Amount</th>
+                  <th>Txn</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recovered.map((r) => (
+                  <tr key={r.id}>
+                    <td>{new Date(r.recoveredAt).toLocaleString()}</td>
+                    <td>
+                      <code>{r.subscriptionId}</code>
+                      {r.pathKey ? (
+                        <span className="muted"> · {r.pathKey}</span>
+                      ) : null}
+                    </td>
+                    <td>
+                      <strong>
+                        {r.amountRecovered.value}{" "}
+                        {r.amountRecovered.currency_code}
+                      </strong>
+                    </td>
+                    <td>
+                      {r.transactionId ? (
+                        <code>{r.transactionId}</code>
+                      ) : (
+                        <span className="muted">n/a</span>
+                      )}
+                    </td>
+                    <td>
+                      <span className="badge live">{r.source}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <div className="toolbar">
         <button type="button" className="primary" onClick={() => void refresh()} disabled={loading}>
@@ -287,6 +398,68 @@ export function RecoveryDesk() {
           <pre>{JSON.stringify(approveResult, null, 2)}</pre>
         </section>
       )}
+
+      <section className="panel">
+        <h2>
+          Webhook inbox{" "}
+          <span className="badge fixture">verified signatures only</span>
+        </h2>
+        <p className="sub" style={{ marginBottom: "0.75rem" }}>
+          Recent events from <code>POST /api/webhooks/paypal</code> after
+          PayPal signature verify. Subscription/payment events highlighted.
+          Simulator = optional smoke only — never money proof.
+        </p>
+        {webhookInbox.length === 0 ? (
+          <p className="sub">
+            No events yet. Needs public tunnel +{" "}
+            <code>PAYPAL_WEBHOOK_ID</code> (see Step 9A doc).
+          </p>
+        ) : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Received</th>
+                  <th>Event</th>
+                  <th>Resource</th>
+                  <th>Flags</th>
+                </tr>
+              </thead>
+              <tbody>
+                {webhookInbox.map((e, i) => (
+                  <tr key={`${e.eventId || "ev"}-${i}`}>
+                    <td>{new Date(e.receivedAt).toLocaleString()}</td>
+                    <td>
+                      <code>{e.eventType || "unknown"}</code>
+                      {e.interesting ? (
+                        <>
+                          {" "}
+                          <span className="badge live">interest</span>
+                        </>
+                      ) : null}
+                    </td>
+                    <td>
+                      {e.resourceId ? (
+                        <code>{e.resourceId}</code>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td>
+                      {e.duplicate ? (
+                        <span className="badge warn">dup</span>
+                      ) : (
+                        <span className="badge live">new</span>
+                      )}{" "}
+                      <span className="badge fixture">not money proof</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {error && <p className="err">{error}</p>}
     </main>

@@ -1,0 +1,19 @@
+[
+  {
+    "id": "seed_7RG29592AA729850V",
+    "subscriptionId": "I-J8R13K0F76X4",
+    "pathKey": "setup-fee-continue",
+    "recoveryAction": "capture_outstanding",
+    "amountRecovered": {
+      "currency_code": "USD",
+      "value": "5.00"
+    },
+    "deskStatus": "RECOVERED",
+    "transactionId": "7RG29592AA729850V",
+    "transactionStatus": "COMPLETED",
+    "recoveredAt": "2026-10-31T12:46:47.000Z",
+    "outstandingCleared": true,
+    "source": "money_proof_fixture",
+    "note": "Step 6 verified PayPal COMPLETED capture; outstanding cleared to 0.0 USD. Not invented MRR."
+  }
+]

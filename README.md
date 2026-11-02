@@ -22,10 +22,11 @@ Desk behavior:
 
 | Step | What |
 | --- | --- |
-| Refresh | Lists 4 seeded subs via live `GET /v1/billing/subscriptions/{id}` |
+| Refresh | Lists seeded subs via live `GET /v1/billing/subscriptions/{id}` |
 | Propose | Deterministic schema `{capture_outstanding \| revise_cheaper \| retry_later \| escalate}` + policy gate |
 | FIXTURE | When outstanding is `$0` — diagnosis only, not verified recovery |
-| Preferred capture | `I-J8R13K0F76X4` (`setup-fee-continue`) — was SUSPENDED + outstanding; see Step 6 proof below |
+| Preferred capture | `I-3HK9STH33F7F` (`judge-demo-outstanding`) — SUSPENDED + outstanding **5.0**; do not capture until filming |
+| Money-proof history | `I-J8R13K0F76X4` (`setup-fee-continue`) — kept listed; see Step 6 |
 | Approve | Re-checks policy; **capture only if outstanding > 0**; revise returns **buyer approve URL** (retention / next cycle) |
 | Deny / write-off demo | Policy refuses write-offs |
 
@@ -33,7 +34,7 @@ Desk behavior:
 
 ### Step 6 money proof (2026-10-31)
 
-Verified on sandbox for `I-J8R13K0F76X4`:
+Verified on sandbox for `I-J8R13K0F76X4` (history — not the preferred desk target anymore):
 
 | Proof | Detail |
 | --- | --- |
@@ -42,14 +43,27 @@ Verified on sandbox for `I-J8R13K0F76X4`:
 | Trail | Approve → HTTP **202** / desk `CAPTURE_PEND` → **422** `CAPTURE_IN_PROGRESS` → cleared |
 | Artifact | [`fixtures/money-proof/I-J8R13K0F76X4-2026-10-31.json`](./fixtures/money-proof/I-J8R13K0F76X4-2026-10-31.json) |
 
-This id is **spent** for another live capture demo until a new outstanding balance appears — re-seed or wait for another failed renewal for judge Recover clicks.
+### Step 7 judge re-seed (2026-10-31)
+
+Preferred shell **`I-3HK9STH33F7F`** — live **SUSPENDED** + outstanding **5.0 USD**. `I-1Y3BCF7UX186` is superseded (ACTIVE / 0). Restore buyer funding, Refresh desk, Propose — **do not Approve/capture until filming**. Prefer `SEED_SUBSCRIPTION_ID=I-3HK9STH33F7F`. Money-proof history: `I-J8R13K0F76X4`.
+
+### Step 9B Recovered MRR + Step 9A webhooks
+
+- Desk board: verified recoveries only (`fixtures/recovered-mrr/seed.json` = txn `7RG29592AA729850V` / `$5` on `I-J8R13K0F76X4`). Approve → RECOVERED appends to `fixtures/recovered-mrr/log.ndjson`.
+- `GET /api/recovered-mrr` — board JSON
+- `POST /api/webhooks/paypal` — signature verify via PayPal + persist (needs public tunnel + `PAYPAL_WEBHOOK_ID`)
+- `GET /api/webhooks/inbox` — recent verified events for desk
+- Simulator = optional smoke only — never money proof. Do not capture live outstanding in Step 9.
 
 ### API sketch
 
 - `GET /api/subscriptions` — seed ids + live PayPal refresh
 - `POST /api/proposals` — body `{ subscriptionId?, demoWriteOff?, forceRevise? }`
-- `POST /api/proposals/:id/approve` — capture / revise / no-op
+- `POST /api/proposals/:id/approve` — capture / revise / no-op; RECOVERED appends recovered-MRR row
 - `POST /api/proposals/:id/deny`
+- `GET /api/recovered-mrr` — verified recoveries board
+- `POST /api/webhooks/paypal` — verified webhook ingest
+- `GET /api/webhooks/inbox` — desk inbox
 
 ### Validate (no live capture)
 
@@ -59,7 +73,7 @@ npm run build
 npm run check:daily
 # With `npm run dev` running:
 curl -s http://localhost:3000/api/subscriptions
-curl -s -X POST http://localhost:3000/api/proposals -H "content-type: application/json" -d "{\"subscriptionId\":\"I-J8R13K0F76X4\"}"
+curl -s -X POST http://localhost:3000/api/proposals -H "content-type: application/json" -d "{\"subscriptionId\":\"I-3HK9STH33F7F\"}"
 ```
 
 ## Seed scripts (Oct 30 SET UP)

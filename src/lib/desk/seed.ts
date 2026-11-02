@@ -4,7 +4,7 @@ import { getSubscription } from "@/lib/paypal/billing";
 import type { DeskSubscription, Money } from "@/types/renewal";
 
 const PREFERRED_CAPTURE_ID =
-  process.env.SEED_SUBSCRIPTION_ID?.trim() || "I-J8R13K0F76X4";
+  process.env.SEED_SUBSCRIPTION_ID?.trim() || "I-3HK9STH33F7F";
 
 const DEFAULT_PLAN_PRICE: Money = { currency_code: "USD", value: "5.00" };
 
@@ -52,7 +52,19 @@ export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
   for (const key of keys) {
     const row = subs[key];
     if (!row?.id) continue;
-    const live = await getSubscription(row.id);
+    // Skip expired APPROVAL_PENDING shells kept only as history
+    if (key.endsWith("-superseded") || row.status === "NOT_FOUND") continue;
+    let live;
+    try {
+      live = await getSubscription(row.id);
+    } catch (err) {
+      const status =
+        err && typeof err === "object" && "status" in err
+          ? Number((err as { status?: number }).status)
+          : undefined;
+      if (status === 404) continue;
+      throw err;
+    }
     const outstanding = live.billing_info?.outstanding_balance ?? null;
     const outstandingValue = outstanding
       ? Number.parseFloat(outstanding.value)
