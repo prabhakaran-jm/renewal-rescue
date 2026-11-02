@@ -3,10 +3,44 @@ import { resolve } from "node:path";
 import { getSubscription } from "@/lib/paypal/billing";
 import type { DeskSubscription, Money } from "@/types/renewal";
 
-const PREFERRED_CAPTURE_ID =
-  process.env.SEED_SUBSCRIPTION_ID?.trim() || "I-CNCX69GD2UD8";
-
 const DEFAULT_PLAN_PRICE: Money = { currency_code: "USD", value: "5.00" };
+
+/** PayPal billing subscription ids look like I-XXXXXXXXXXXX */
+const PAYPAL_SUB_ID_RE = /^I-[A-Z0-9]+$/i;
+
+/**
+ * Normalize a single env token into a PayPal subscription id.
+ * Strips accidental `KEY=` paste (e.g. SEED_SUBSCRIPTION_IDS=I-…),
+ * rejects non I-* values so we never call PayPal with garbage paths.
+ */
+export function sanitizePaypalSubscriptionId(
+  raw: string | null | undefined
+): string | null {
+  if (raw == null) return null;
+  let s = String(raw).trim();
+  if (!s) return null;
+  // Accidental "KEY=value" pasted into the Vercel value field
+  const eq = s.indexOf("=");
+  if (eq > 0 && /^[A-Z0-9_]+$/i.test(s.slice(0, eq))) {
+    s = s.slice(eq + 1).trim();
+  }
+  // Quotes from .env paste
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  if (!PAYPAL_SUB_ID_RE.test(s)) return null;
+  return s;
+}
+
+function preferredCaptureIdFromEnv(): string {
+  return (
+    sanitizePaypalSubscriptionId(process.env.SEED_SUBSCRIPTION_ID) ||
+    "I-CNCX69GD2UD8"
+  );
+}
 
 /** Friendly keys when Vercel has only SEED_SUBSCRIPTION_IDS (no fixture file). */
 const KNOWN_SEED_META: Record<
@@ -66,10 +100,18 @@ export function loadSeedIds(): SeedFile {
 function parseEnvSubscriptionIds(): string[] {
   const envRaw = process.env.SEED_SUBSCRIPTION_IDS?.trim();
   if (!envRaw) return [];
-  return envRaw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // Whole-field KEY=value paste: SEED_SUBSCRIPTION_IDS=I-a,I-b
+  let body = envRaw;
+  const eq = body.indexOf("=");
+  if (eq > 0 && /^[A-Z0-9_]+$/i.test(body.slice(0, eq).trim())) {
+    body = body.slice(eq + 1).trim();
+  }
+  const ids: string[] = [];
+  for (const part of body.split(",")) {
+    const id = sanitizePaypalSubscriptionId(part);
+    if (id) ids.push(id);
+  }
+  return ids;
 }
 
 /**
@@ -132,7 +174,7 @@ export function recoveredMrrSubscriptionIds(): string[] {
 }
 
 export function preferredCaptureId() {
-  return PREFERRED_CAPTURE_ID;
+  return preferredCaptureIdFromEnv();
 }
 
 /** List seeded subs with live PayPal Billing GET refresh. */
@@ -181,7 +223,7 @@ export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
       nextBillingTime: live.billing_info?.next_billing_time ?? null,
       lastPayment: live.billing_info?.last_payment ?? null,
       refreshedAt,
-      preferredCaptureTarget: live.id === PREFERRED_CAPTURE_ID,
+      preferredCaptureTarget: live.id === preferredCaptureIdFromEnv(),
       fixtureLabeled: !(outstandingValue > 0),
       currentPlanPrice: DEFAULT_PLAN_PRICE,
     });
