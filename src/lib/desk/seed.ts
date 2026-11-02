@@ -4,9 +4,41 @@ import { getSubscription } from "@/lib/paypal/billing";
 import type { DeskSubscription, Money } from "@/types/renewal";
 
 const PREFERRED_CAPTURE_ID =
-  process.env.SEED_SUBSCRIPTION_ID?.trim() || "I-3HK9STH33F7F";
+  process.env.SEED_SUBSCRIPTION_ID?.trim() || "I-CNCX69GD2UD8";
 
 const DEFAULT_PLAN_PRICE: Money = { currency_code: "USD", value: "5.00" };
+
+/** Friendly keys when Vercel has only SEED_SUBSCRIPTION_IDS (no fixture file). */
+const KNOWN_SEED_META: Record<
+  string,
+  Pick<SeedSubRow, "planKey" | "failurePath" | "note">
+> = {
+  "I-3FSFGWWRAV4D": {
+    planKey: "setupFee",
+    failurePath: "outstanding-smoke",
+    note: "Step3 smoke — SUSPENDED+outstanding; prefer wrong-passcode before live capture",
+  },
+  "I-CNCX69GD2UD8": {
+    planKey: "setupFee",
+    failurePath: "outstanding-film",
+    note: "Step3 film (preferred) — do not Approve until filming",
+  },
+  "I-S5J71BPHJBT3": {
+    planKey: "setupFee",
+    failurePath: "outstanding-judge-1",
+    note: "Step3 judge spare — leave for judges",
+  },
+  "I-FWR8V1TKDEFW": {
+    planKey: "setupFee",
+    failurePath: "outstanding-judge-2",
+    note: "Step3 judge spare — leave for judges",
+  },
+  "I-J8R13K0F76X4": {
+    planKey: "setupFee",
+    failurePath: "setup-fee-continue",
+    note: "Money-proof history — MRR board; not preferred capture",
+  },
+};
 
 type SeedSubRow = {
   id: string;
@@ -22,19 +54,27 @@ type SeedFile = {
   subscriptions?: Record<string, SeedSubRow>;
 };
 
+/** Load fixture file if present; empty object if missing (Vercel env-only mode). */
 export function loadSeedIds(): SeedFile {
   const path = resolve(process.cwd(), "fixtures/seed-ids.json");
   if (!existsSync(path)) {
-    throw new Error(
-      "fixtures/seed-ids.json missing — run npm run seed:all / seed:subs first"
-    );
+    return { subscriptions: {} };
   }
   return JSON.parse(readFileSync(path, "utf8")) as SeedFile;
 }
 
+function parseEnvSubscriptionIds(): string[] {
+  const envRaw = process.env.SEED_SUBSCRIPTION_IDS?.trim();
+  if (!envRaw) return [];
+  return envRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /**
  * Env override: comma-separated subscription IDs for the desk (Vercel-safe).
- * Falls back to fixtures/seed-ids.json keys when unset.
+ * Does not require fixtures/seed-ids.json when SEED_SUBSCRIPTION_IDS is set.
  */
 export function resolveSeedSubscriptionEntries(): Array<{
   key: string;
@@ -42,51 +82,51 @@ export function resolveSeedSubscriptionEntries(): Array<{
 }> {
   const file = loadSeedIds();
   const subs = file.subscriptions || {};
-  const envRaw = process.env.SEED_SUBSCRIPTION_IDS?.trim();
-  if (envRaw) {
-    const ids = envRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    return ids.map((id) => {
+  const envIds = parseEnvSubscriptionIds();
+
+  if (envIds.length) {
+    return envIds.map((id) => {
       const found = Object.entries(subs).find(([, row]) => row?.id === id);
       if (found) {
         return { key: found[0], row: found[1] };
       }
+      const meta = KNOWN_SEED_META[id];
       return {
-        key: id,
+        key: meta?.failurePath || id,
         row: {
           id,
-          planKey: "env",
-          failurePath: "env-seed",
-          note: "From SEED_SUBSCRIPTION_IDS",
+          planKey: meta?.planKey || "env",
+          failurePath: meta?.failurePath || "env-seed",
+          note: meta?.note || "From SEED_SUBSCRIPTION_IDS",
         },
       };
     });
   }
 
-  return Object.entries(subs)
+  const fromFile = Object.entries(subs)
     .filter(
       ([key, row]) =>
         Boolean(row?.id) &&
         !key.endsWith("-superseded") &&
+        !key.endsWith("-funded-fail") &&
         row.status !== "NOT_FOUND"
     )
     .map(([key, row]) => ({ key, row }));
+
+  if (fromFile.length < 1) {
+    throw new Error(
+      "No subscriptions — set SEED_SUBSCRIPTION_IDS on Vercel (fixtures/seed-ids.json is gitignored) or run seed locally"
+    );
+  }
+  return fromFile;
 }
 
 /** IDs to probe for recovered-MRR (env list or preferred money-proof + preferred capture). */
 export function recoveredMrrSubscriptionIds(): string[] {
-  const envRaw = process.env.SEED_SUBSCRIPTION_IDS?.trim();
-  if (envRaw) {
-    return envRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
+  const envIds = parseEnvSubscriptionIds();
+  if (envIds.length) return [...new Set(envIds)];
   const entries = resolveSeedSubscriptionEntries();
   const ids = entries.map((e) => e.row.id);
-  // Always include money-proof history sub when using fixture seeds
   if (!ids.includes("I-J8R13K0F76X4")) ids.push("I-J8R13K0F76X4");
   return [...new Set(ids)];
 }

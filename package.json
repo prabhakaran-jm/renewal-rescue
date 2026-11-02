@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx --tsconfig tsconfig.json --test tests/policy.engine.test.ts tests/propose.ai.test.ts tests/proposal-token.test.ts tests/recovered-mrr.test.ts tests/passcode.test.ts",
+    "test": "tsx --tsconfig tsconfig.json --test tests/policy.engine.test.ts tests/propose.ai.test.ts tests/proposal-token.test.ts tests/recovered-mrr.test.ts tests/passcode.test.ts tests/seed-env.test.ts",
     "test:policy": "tsx --tsconfig tsconfig.json --test tests/policy.engine.test.ts",
     "test:ai": "tsx --tsconfig tsconfig.json --test tests/propose.ai.test.ts",
     "test:tokens": "tsx --tsconfig tsconfig.json --test tests/proposal-token.test.ts",
@@ -19,6 +19,7 @@
     "seed:outstanding-batch": "node scripts/seed/seed-subscriptions.mjs --outstanding-batch",
     "seed:all": "node scripts/seed/run-oct30-setup.mjs",
     "check:daily": "node scripts/seed/check-outstanding.mjs",
+    "smoke:money-safe": "node scripts/smoke-money-safe.mjs",
     "webhook:dev": "node scripts/webhook/dev-listener.mjs"
   },
   "dependencies": {
