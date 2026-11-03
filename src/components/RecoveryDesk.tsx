@@ -30,7 +30,7 @@ type ProposalPayload = {
   };
   policy: { ok: true } | { ok: false; reason: string };
   ai?: {
-    source: "gemini" | "fallback";
+    source: "gemini" | "fallback" | "rule";
     model: string;
     reason?: string;
   };
@@ -42,6 +42,21 @@ type ProposalPayload = {
     preferredCaptureTarget?: boolean;
     fixtureLabeled?: boolean;
   };
+};
+
+type ApproveResult = {
+  ok?: boolean;
+  pending?: boolean;
+  deskStatus?: string;
+  message?: string;
+  error?: string;
+  detail?: string;
+  proposalId?: string;
+  outstandingAfter?: Money | null;
+  recovered?: unknown;
+  activate?: unknown;
+  paypal?: unknown;
+  proposal?: unknown;
 };
 
 type RecoveredRow = {
@@ -67,6 +82,22 @@ type WebhookInboxRow = {
   moneyProof: false;
 };
 
+/** Customer-facing card titles — hide internal seed path keys on the desk. */
+const CUSTOMER_LABELS: Record<string, string> = {
+  "outstanding-smoke": "Northwind Yoga",
+  "outstanding-film": "Harbor Coffee Club",
+  "outstanding-judge-1": "Brightline Studio",
+  "outstanding-judge-2": "Cedar Fitness",
+  "setup-fee-continue": "Cleared renewal (archive)",
+};
+
+const POLL_MAX_ATTEMPTS = 12;
+const POLL_INTERVAL_MS = 5_000;
+
+function customerLabel(key: string): string {
+  return CUSTOMER_LABELS[key] || key.replace(/-/g, " ");
+}
+
 export function RecoveryDesk() {
   const [subs, setSubs] = useState<DeskSub[]>([]);
   const [preferredCaptureId, setPreferredCaptureId] = useState(
@@ -77,13 +108,25 @@ export function RecoveryDesk() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [proposal, setProposal] = useState<ProposalPayload | null>(null);
   const [approveBusy, setApproveBusy] = useState(false);
-  const [approveResult, setApproveResult] = useState<unknown>(null);
+  const [approveResult, setApproveResult] = useState<ApproveResult | null>(
+    null
+  );
   const [demoPasscode, setDemoPasscode] = useState("");
   const [recovered, setRecovered] = useState<RecoveredRow[]>([]);
   const [recoveredTotal, setRecoveredTotal] = useState(0);
   const [mrrPulse, setMrrPulse] = useState(false);
   const [webhookInbox, setWebhookInbox] = useState<WebhookInboxRow[]>([]);
+  const [showFixtures, setShowFixtures] = useState(false);
+  const [pendPoll, setPendPoll] = useState<{
+    subscriptionId: string;
+    proposalId: string;
+    attempt: number;
+    max: number;
+  } | null>(null);
   const mrrPrev = useRef<number | null>(null);
+  const pollTimer = useRef<number | null>(null);
+  const passcodeRef = useRef(demoPasscode);
+  passcodeRef.current = demoPasscode;
 
   const refreshBoards = useCallback(async () => {
     try {
@@ -105,6 +148,20 @@ export function RecoveryDesk() {
     }
   }, []);
 
+  /** Reload subscriptions without wiping proposal / approve UI (poll + settle). */
+  const refreshSubsSilent = useCallback(async (): Promise<DeskSub[]> => {
+    const res = await fetch("/api/subscriptions", { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const list = (data.subscriptions || []) as DeskSub[];
+    setSubs(list);
+    if (data.preferredCaptureId) {
+      setPreferredCaptureId(data.preferredCaptureId);
+    }
+    await refreshBoards();
+    return list;
+  }, [refreshBoards]);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -114,26 +171,22 @@ export function RecoveryDesk() {
     setApproveBusy(false);
     setDemoPasscode("");
     setSelectedId(null);
+    setPendPoll(null);
+    if (pollTimer.current != null) {
+      window.clearTimeout(pollTimer.current);
+      pollTimer.current = null;
+    }
     try {
-      const res = await fetch("/api/subscriptions", { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setSubs(data.subscriptions || []);
-      if (data.preferredCaptureId) {
-        setPreferredCaptureId(data.preferredCaptureId);
-      }
+      const list = await refreshSubsSilent();
       const preferred =
-        (data.subscriptions as DeskSub[] | undefined)?.find(
-          (s) => s.preferredCaptureTarget
-        ) || (data.subscriptions as DeskSub[] | undefined)?.[0];
+        list.find((s) => s.preferredCaptureTarget) || list[0];
       if (preferred) setSelectedId(preferred.id);
-      await refreshBoards();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Refresh failed");
     } finally {
       setLoading(false);
     }
-  }, [refreshBoards]);
+  }, [refreshSubsSilent]);
 
   useEffect(() => {
     void refresh();
@@ -153,12 +206,19 @@ export function RecoveryDesk() {
     }
   }, [recoveredTotal]);
 
+  useEffect(() => {
+    return () => {
+      if (pollTimer.current != null) window.clearTimeout(pollTimer.current);
+    };
+  }, []);
+
   async function propose(opts?: {
     demoWriteOff?: boolean;
     forceRevise?: boolean;
   }) {
     setError(null);
     setApproveResult(null);
+    setPendPoll(null);
     const subscriptionId = selectedId || preferredCaptureId;
     const res = await fetch("/api/proposals", {
       method: "POST",
@@ -171,6 +231,82 @@ export function RecoveryDesk() {
       return;
     }
     setProposal(data);
+  }
+
+  async function settlePending(proposalId: string): Promise<ApproveResult> {
+    const res = await fetch(
+      `/api/proposals/${encodeURIComponent(proposalId)}/approve`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-demo-passcode": passcodeRef.current,
+        },
+        body: JSON.stringify({ passcode: passcodeRef.current }),
+      }
+    );
+    return (await res.json()) as ApproveResult;
+  }
+
+  function startPendPoll(opts: {
+    subscriptionId: string;
+    proposalId: string;
+  }) {
+    setPendPoll({
+      subscriptionId: opts.subscriptionId,
+      proposalId: opts.proposalId,
+      attempt: 0,
+      max: POLL_MAX_ATTEMPTS,
+    });
+
+    const tick = async (attempt: number, proposalId: string) => {
+      if (attempt >= POLL_MAX_ATTEMPTS) {
+        setPendPoll(null);
+        setApproveResult((prev) => ({
+          ...(prev || {}),
+          pending: true,
+          deskStatus: "CAPTURE_PEND",
+          message:
+            "Pending PayPal confirmation — still outstanding after poll. Use Refresh later.",
+        }));
+        return;
+      }
+      setPendPoll({
+        subscriptionId: opts.subscriptionId,
+        proposalId,
+        attempt: attempt + 1,
+        max: POLL_MAX_ATTEMPTS,
+      });
+      try {
+        const list = await refreshSubsSilent();
+        const row = list.find((s) => s.id === opts.subscriptionId);
+        if (row && row.outstandingValue <= 0) {
+          const settled = await settlePending(proposalId);
+          if (settled.proposalId) {
+            setProposal((p) =>
+              p
+                ? { ...p, proposalId: settled.proposalId || p.proposalId }
+                : p
+            );
+          }
+          setApproveResult(settled);
+          if (settled.deskStatus === "RECOVERED" || settled.ok) {
+            setPendPoll(null);
+            await refreshSubsSilent();
+            return;
+          }
+        }
+      } catch {
+        /* keep polling */
+      }
+      pollTimer.current = window.setTimeout(() => {
+        void tick(attempt + 1, proposalId);
+      }, POLL_INTERVAL_MS);
+    };
+
+    pollTimer.current = window.setTimeout(() => {
+      void tick(0, opts.proposalId);
+    }, POLL_INTERVAL_MS);
   }
 
   async function approve() {
@@ -196,15 +332,28 @@ export function RecoveryDesk() {
           body: JSON.stringify({ passcode: demoPasscode }),
         }
       );
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || data.reason || `Approve HTTP ${res.status}`);
+      const data = (await res.json()) as ApproveResult;
+
+      if (data.deskStatus === "CAPTURE_PEND" || data.pending) {
+        const nextId = data.proposalId || proposal.proposalId;
+        setProposal((p) =>
+          p ? { ...p, proposalId: nextId } : p
+        );
+        setApproveResult(data);
+        startPendPoll({
+          subscriptionId: proposal.proposal.subscriptionId,
+          proposalId: nextId,
+        });
+        return;
+      }
+
+      if (!res.ok || data.ok === false) {
+        setError(data.error || data.message || `Approve HTTP ${res.status}`);
         setApproveResult(data);
         return;
       }
       setApproveResult(data);
-      await refresh();
-      await refreshBoards();
+      await refreshSubsSilent();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Approve failed");
     } finally {
@@ -235,7 +384,16 @@ export function RecoveryDesk() {
 
   const policyOk =
     Boolean(proposal?.policy.ok) && proposal?.status !== "BLOCKED";
-  const aiIsGemini = proposal?.ai?.source === "gemini";
+  const aiSource = proposal?.ai?.source;
+  const aiIsGemini = aiSource === "gemini";
+  const aiIsRule = aiSource === "rule";
+  const isPend =
+    approveResult?.deskStatus === "CAPTURE_PEND" || approveResult?.pending;
+  const isRecovered = approveResult?.deskStatus === "RECOVERED";
+
+  const visibleSubs = showFixtures
+    ? subs
+    : subs.filter((s) => !(s.fixtureLabeled || s.outstandingValue <= 0));
 
   return (
     <main className="desk">
@@ -286,64 +444,79 @@ export function RecoveryDesk() {
         <div className="section-head">
           <h2 id="subs-heading">Subscriptions</h2>
           <p className="hint">
-            Select a row, then Propose. Quiet badges mark live balance vs
-            fixture.
+            Select a customer, then Propose. Live outstanding only by default.
           </p>
         </div>
+        <label className="toggle-fixtures">
+          <input
+            type="checkbox"
+            checked={showFixtures}
+            onChange={(e) => setShowFixtures(e.target.checked)}
+          />
+          Show fixture / $0 rows
+        </label>
         <div className="sub-grid">
-          {subs.map((s) => {
-            const selected = selectedId === s.id;
-            return (
-              <label
-                key={s.id}
-                className={`sub-row${selected ? " selected" : ""}`}
-              >
-                <input
-                  type="radio"
-                  name="sub"
-                  checked={selected}
-                  onChange={() => setSelectedId(s.id)}
-                  aria-label={`Select ${s.key}`}
-                />
-                <div className="sub-row-body">
-                  <div className="sub-row-top">
-                    <span className="path">{s.key}</span>
-                    {s.preferredCaptureTarget ? (
-                      <span className="badge quiet-live">Preferred</span>
-                    ) : null}
-                    {s.outstandingValue > 0 ? (
-                      <span className="badge quiet-live">Outstanding</span>
-                    ) : (
-                      <span className="badge quiet-fixture">Fixture</span>
-                    )}
-                    <span className="badge quiet-status">{s.status}</span>
+          {visibleSubs.length === 0 ? (
+            <p className="empty">
+              No live outstanding subscriptions. Toggle fixtures to review
+              archive rows.
+            </p>
+          ) : (
+            visibleSubs.map((s) => {
+              const selected = selectedId === s.id;
+              const label = customerLabel(s.key);
+              return (
+                <label
+                  key={s.id}
+                  className={`sub-row${selected ? " selected" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="sub"
+                    checked={selected}
+                    onChange={() => setSelectedId(s.id)}
+                    aria-label={`Select ${label}`}
+                  />
+                  <div className="sub-row-body">
+                    <div className="sub-row-top">
+                      <span className="path">{label}</span>
+                      {s.preferredCaptureTarget ? (
+                        <span className="badge quiet-live">Preferred</span>
+                      ) : null}
+                      {s.outstandingValue > 0 ? (
+                        <span className="badge quiet-live">Outstanding</span>
+                      ) : (
+                        <span className="badge quiet-fixture">Fixture</span>
+                      )}
+                      <span className="badge quiet-status">{s.status}</span>
+                    </div>
+                    <div className="sub-metrics">
+                      <div>
+                        <span className="label">Id</span>
+                        <strong>{s.id}</strong>
+                      </div>
+                      <div>
+                        <span className="label">Outstanding</span>
+                        <strong>
+                          {s.outstanding
+                            ? `${s.outstanding.value} ${s.outstanding.currency_code}`
+                            : "0"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="label">Status</span>
+                        <strong>{s.status}</strong>
+                      </div>
+                      <div>
+                        <span className="label">Failed</span>
+                        <strong>{s.failedPaymentsCount ?? "n/a"}</strong>
+                      </div>
+                    </div>
                   </div>
-                  <div className="sub-metrics">
-                    <div>
-                      <span className="label">Id</span>
-                      <strong>{s.id}</strong>
-                    </div>
-                    <div>
-                      <span className="label">Outstanding</span>
-                      <strong>
-                        {s.outstanding
-                          ? `${s.outstanding.value} ${s.outstanding.currency_code}`
-                          : "0"}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="label">Status</span>
-                      <strong>{s.status}</strong>
-                    </div>
-                    <div>
-                      <span className="label">Failed</span>
-                      <strong>{s.failedPaymentsCount ?? "n/a"}</strong>
-                    </div>
-                  </div>
-                </div>
-              </label>
-            );
-          })}
+                </label>
+              );
+            })
+          )}
         </div>
       </section>
 
@@ -363,20 +536,32 @@ export function RecoveryDesk() {
           </h2>
 
           <div
-            className={`ai-spotlight${aiIsGemini ? "" : " fallback"}`}
+            className={`ai-spotlight${aiIsGemini ? "" : " fallback"}${aiIsRule ? " rule" : ""}`}
           >
             <div className="ai-label">
               {aiIsGemini ? (
-                <span className="badge ai-gemini">Gemini</span>
-              ) : (
-                <span className="badge ai-fallback">
-                  Fallback
+                <>
+                  <span className="badge ai-gemini">Gemini</span>
+                  {proposal.ai?.model ? (
+                    <span className="muted">{proposal.ai.model}</span>
+                  ) : null}
+                </>
+              ) : aiIsRule ? (
+                <span className="badge ai-rule">
+                  RULE
                   {proposal.ai?.reason ? ` · ${proposal.ai.reason}` : ""}
                 </span>
+              ) : (
+                <>
+                  <span className="badge ai-fallback">
+                    Fallback
+                    {proposal.ai?.reason ? ` · ${proposal.ai.reason}` : ""}
+                  </span>
+                  {proposal.ai?.model ? (
+                    <span className="muted">{proposal.ai.model}</span>
+                  ) : null}
+                </>
               )}
-              {proposal.ai?.model ? (
-                <span className="muted">{proposal.ai.model}</span>
-              ) : null}
             </div>
             <p className="customer-draft">
               <em>Customer draft</em>
@@ -416,7 +601,7 @@ export function RecoveryDesk() {
             <button
               type="button"
               className={policyOk ? "primary" : "ghost"}
-              disabled={approveBusy || !policyOk}
+              disabled={approveBusy || !policyOk || Boolean(pendPoll)}
               onClick={() => void approve()}
             >
               {approveBusy ? "Approving…" : "Approve"}
@@ -438,8 +623,32 @@ export function RecoveryDesk() {
           <div className="section-head">
             <h2>Approve / Deny result</h2>
           </div>
+          {isPend ? (
+            <div className="result-banner pend" role="status">
+              <strong>Pending PayPal confirmation</strong>
+              <span>
+                {approveResult.message ||
+                  "Capture accepted; waiting for outstanding to clear."}
+              </span>
+              {pendPoll ? (
+                <span className="muted">
+                  Checking outstanding… {pendPoll.attempt}/{pendPoll.max}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {isRecovered ? (
+            <div className="result-banner ok" role="status">
+              <strong>Recovered</strong>
+              <span>
+                Outstanding cleared
+                {approveResult.activate ? "; subscription activate attempted" : ""}
+                .
+              </span>
+            </div>
+          ) : null}
           <div className="board">
-            <details className="raw-json" open>
+            <details className="raw-json">
               <summary>Result payload</summary>
               <pre>{JSON.stringify(approveResult, null, 2)}</pre>
             </details>
@@ -479,7 +688,10 @@ export function RecoveryDesk() {
                       <td>
                         <code>{r.subscriptionId}</code>
                         {r.pathKey ? (
-                          <span className="muted"> · {r.pathKey}</span>
+                          <span className="muted">
+                            {" "}
+                            · {customerLabel(r.pathKey)}
+                          </span>
                         ) : null}
                       </td>
                       <td>
@@ -507,18 +719,13 @@ export function RecoveryDesk() {
         </div>
       </section>
 
-      <section className="section" aria-labelledby="wh-heading">
-        <div className="section-head">
-          <h2 id="wh-heading">Webhook inbox</h2>
-          <p className="hint">Verified signatures only — not money proof.</p>
-        </div>
-        <div className="board">
-          {webhookInbox.length === 0 ? (
-            <p className="empty">
-              No events yet. Register the production webhook URL with PayPal
-              and set PAYPAL_WEBHOOK_ID.
-            </p>
-          ) : (
+      {webhookInbox.length > 0 ? (
+        <section className="section" aria-labelledby="wh-heading">
+          <div className="section-head">
+            <h2 id="wh-heading">Webhook inbox</h2>
+            <p className="hint">Verified signatures only — not money proof.</p>
+          </div>
+          <div className="board">
             <div className="table-wrap">
               <table className="data">
                 <thead>
@@ -561,9 +768,9 @@ export function RecoveryDesk() {
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
-      </section>
+          </div>
+        </section>
+      ) : null}
 
       {error && <p className="err">{error}</p>}
     </main>

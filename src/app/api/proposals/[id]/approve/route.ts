@@ -10,6 +10,7 @@ import {
 import { getProposal, updateProposal } from "@/lib/desk/proposals";
 import { appendVerifiedRecovery } from "@/lib/desk/recovered-mrr";
 import { getDeskSubscription } from "@/lib/desk/seed";
+import { activateAfterCaptureAction } from "@/lib/recovery/activate";
 import { captureOutstandingAction } from "@/lib/recovery/capture";
 import { reviseCheaperAction } from "@/lib/recovery/revise";
 import type { Money } from "@/types/renewal";
@@ -19,10 +20,69 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+type CaptureResultShape = {
+  kind?: string;
+  verified?: boolean;
+  amount?: Money;
+  paypal?: unknown;
+  paypalRequestId?: string;
+  subscriptionId?: string;
+};
+
+function isPendingUnverifiedCapture(result: unknown): result is CaptureResultShape {
+  if (!result || typeof result !== "object") return false;
+  const r = result as CaptureResultShape;
+  return r.kind === "capture_outstanding" && r.verified === false;
+}
+
+async function finalizeClearedCapture(opts: {
+  token: string;
+  shortId: string;
+  subId: string;
+  pathKey: string;
+  amount: Money;
+  paypal: unknown;
+  outstandingAfter: Money | null;
+}) {
+  const activate = await activateAfterCaptureAction(opts.subId);
+  const recoveredRow = appendVerifiedRecovery({
+    subscriptionId: opts.subId,
+    pathKey: opts.pathKey,
+    amount: opts.amount,
+    paypal: opts.paypal,
+    proposalId: opts.shortId,
+    note: `Approve RECOVERED on ${opts.subId}; outstanding cleared; activate ${activate.ok ? "ok" : "failed"}.`,
+  });
+  const next = updateProposal(opts.token, {
+    status: "APPROVED",
+    result: {
+      kind: "capture_outstanding",
+      paypal: opts.paypal,
+      amount: opts.amount,
+      subscriptionId: opts.subId,
+      outstandingAfter: opts.outstandingAfter,
+      verified: true,
+      recoveredMrrId: recoveredRow.id,
+      paypalRequestId: opts.shortId,
+      activate,
+    },
+  });
+  return {
+    ok: true as const,
+    deskStatus: "RECOVERED" as const,
+    recovered: recoveredRow,
+    activate,
+    proposalId: next?.token,
+    proposal: next,
+  };
+}
+
 /**
  * Merchant Approve → DEMO_PASSCODE → verify HMAC token → policy → capture/revise.
  * Capture uses PayPal-Request-Id = token short id.
  * Revise has NO idempotency key — see reviseCheaperAction docs.
+ * CAPTURE_PEND (async PayPal) returns HTTP 202; re-Approve settles when outstanding is $0,
+ * then POST .../activate (SUSPENDED→ACTIVE) on the same passcode-gated path.
  */
 export async function POST(req: Request, ctx: Ctx) {
   try {
@@ -86,6 +146,57 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
+    const action = stored.proposal.action;
+    const shortId = stored.id;
+
+    // Settle async capture BEFORE live policy re-check — outstanding may already be $0.
+    if (
+      action === "capture_outstanding" &&
+      isPendingUnverifiedCapture(stored.result)
+    ) {
+      const after = await getDeskSubscription(sub.id);
+      const outstandingAfter = after?.outstanding ?? null;
+      const cleared = (after?.outstandingValue ?? 0) <= 0;
+      if (!cleared) {
+        const next = updateProposal(token, {
+          result: {
+            ...stored.result,
+            outstandingAfter,
+            verified: false,
+          },
+        });
+        return NextResponse.json(
+          {
+            ok: false,
+            pending: true,
+            deskStatus: "CAPTURE_PEND",
+            message: "Pending PayPal confirmation",
+            paypal: stored.result.paypal,
+            outstandingAfter,
+            proposalId: next?.token ?? token,
+            proposal: next,
+          },
+          { status: 202 }
+        );
+      }
+      const amountForBoard: Money =
+        stored.result.amount ||
+        stored.proposal.impact || {
+          currency_code: "USD",
+          value: "0.00",
+        };
+      const finalized = await finalizeClearedCapture({
+        token,
+        shortId,
+        subId: sub.id,
+        pathKey: sub.key,
+        amount: amountForBoard,
+        paypal: stored.result.paypal,
+        outstandingAfter,
+      });
+      return NextResponse.json(finalized);
+    }
+
     if (
       captureAmountExceedsOutstanding(
         stored.proposal,
@@ -115,9 +226,6 @@ export async function POST(req: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
-
-    const action = stored.proposal.action;
-    const shortId = stored.id;
 
     if (action === "retry_later" || action === "escalate") {
       const next = updateProposal(token, {
@@ -177,16 +285,18 @@ export async function POST(req: Request, ctx: Ctx) {
         return NextResponse.json(
           {
             ok: false,
-            error: emptyOrPending
-              ? "PayPal capture returned empty/pending body and outstanding is still > 0 — not money proof"
-              : "PayPal capture response received but outstanding balance still > 0 — not money proof",
+            pending: true,
             deskStatus: "CAPTURE_PEND",
+            message: "Pending PayPal confirmation",
+            detail: emptyOrPending
+              ? "PayPal accepted capture asynchronously; outstanding still > 0"
+              : "Capture response received; outstanding still > 0",
             paypal: result,
             outstandingAfter,
-            proposalId: next?.token,
+            proposalId: next?.token ?? token,
             proposal: next,
           },
-          { status: 502 }
+          { status: 202 }
         );
       }
 
@@ -197,35 +307,16 @@ export async function POST(req: Request, ctx: Ctx) {
           value: "0.00",
         };
 
-      const recoveredRow = appendVerifiedRecovery({
-        subscriptionId: sub.id,
+      const finalized = await finalizeClearedCapture({
+        token,
+        shortId,
+        subId: sub.id,
         pathKey: sub.key,
         amount: amountForBoard,
         paypal: result,
-        proposalId: shortId,
-        note: `Approve RECOVERED on ${sub.id}; outstanding cleared.`,
+        outstandingAfter,
       });
-
-      const next = updateProposal(token, {
-        status: "APPROVED",
-        result: {
-          kind: "capture_outstanding",
-          paypal: result,
-          amount: amountForBoard,
-          subscriptionId: sub.id,
-          outstandingAfter,
-          verified: true,
-          recoveredMrrId: recoveredRow.id,
-          paypalRequestId: shortId,
-        },
-      });
-      return NextResponse.json({
-        ok: true,
-        deskStatus: "RECOVERED",
-        recovered: recoveredRow,
-        proposalId: next?.token,
-        proposal: next,
-      });
+      return NextResponse.json(finalized);
     }
 
     if (action === "revise_cheaper") {

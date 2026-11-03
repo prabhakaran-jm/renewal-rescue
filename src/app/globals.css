@@ -295,6 +295,59 @@ button:disabled {
   padding: 0.28rem 0.55rem;
 }
 
+.badge.ai-rule {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: var(--warn-soft);
+  font-size: 0.78rem;
+  padding: 0.28rem 0.55rem;
+}
+
+.ai-spotlight.rule {
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--line));
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--warn-soft) 88%, white),
+    color-mix(in srgb, var(--bg-elevated) 70%, white)
+  );
+}
+
+.toggle-fixtures {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.85rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.toggle-fixtures input {
+  accent-color: var(--accent);
+}
+
+.result-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0 0 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
+.result-banner.pend {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn-soft) 75%, white);
+}
+
+.result-banner.ok {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 70%, white);
+}
+
 .proposal-panel {
   margin-top: 1.5rem;
   padding: 1.15rem 1.2rem 1.25rem;
