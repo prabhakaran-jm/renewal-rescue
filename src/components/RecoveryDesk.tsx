@@ -108,6 +108,12 @@ export function RecoveryDesk() {
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Clear desk proposal UI so Refresh does not leave a stale Propose panel.
+    setProposal(null);
+    setApproveResult(null);
+    setApproveBusy(false);
+    setDemoPasscode("");
+    setSelectedId(null);
     try {
       const res = await fetch("/api/subscriptions", { cache: "no-store" });
       const data = await res.json();
@@ -120,14 +126,14 @@ export function RecoveryDesk() {
         (data.subscriptions as DeskSub[] | undefined)?.find(
           (s) => s.preferredCaptureTarget
         ) || (data.subscriptions as DeskSub[] | undefined)?.[0];
-      if (preferred && !selectedId) setSelectedId(preferred.id);
+      if (preferred) setSelectedId(preferred.id);
       await refreshBoards();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Refresh failed");
     } finally {
       setLoading(false);
     }
-  }, [selectedId, refreshBoards]);
+  }, [refreshBoards]);
 
   useEffect(() => {
     void refresh();
