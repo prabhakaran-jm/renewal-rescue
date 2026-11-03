@@ -1,5 +1,9 @@
 import { RecoveryDesk } from "@/components/RecoveryDesk";
 
 export default function HomePage() {
-  return <RecoveryDesk />;
+  return (
+    <div className="desk-shell">
+      <RecoveryDesk />
+    </div>
+  );
 }
