@@ -1,6 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  coerceRecoveredBoardRow,
+  mergeRecoveredBoard,
+  serverHasRecovery,
+  sumRecoveredBoardUsd,
+  upsertOptimisticRecovered,
+  type RecoveredBoardRow,
+} from "@/lib/desk/merge-recovered";
 
 type Money = { currency_code: string; value: string };
 
@@ -59,18 +67,6 @@ type ApproveResult = {
   proposal?: unknown;
 };
 
-type RecoveredRow = {
-  id: string;
-  subscriptionId: string;
-  pathKey?: string;
-  amountRecovered: Money;
-  transactionId: string | null;
-  transactionStatus: string | null;
-  recoveredAt: string;
-  source: string;
-  note?: string;
-};
-
 type WebhookInboxRow = {
   receivedAt: string;
   eventId: string | null;
@@ -93,6 +89,8 @@ const CUSTOMER_LABELS: Record<string, string> = {
 
 const POLL_MAX_ATTEMPTS = 12;
 const POLL_INTERVAL_MS = 5_000;
+/** Bounded post-settle MRR confirm polls (same cadence, fewer rounds). */
+const MRR_POLL_MAX_ATTEMPTS = 6;
 
 function customerLabel(key: string): string {
   return CUSTOMER_LABELS[key] || key.replace(/-/g, " ");
@@ -112,8 +110,12 @@ export function RecoveryDesk() {
     null
   );
   const [demoPasscode, setDemoPasscode] = useState("");
-  const [recovered, setRecovered] = useState<RecoveredRow[]>([]);
-  const [recoveredTotal, setRecoveredTotal] = useState(0);
+  const [serverRecovered, setServerRecovered] = useState<RecoveredBoardRow[]>(
+    []
+  );
+  const [optimisticRecovered, setOptimisticRecovered] = useState<
+    RecoveredBoardRow[]
+  >([]);
   const [mrrPulse, setMrrPulse] = useState(false);
   const [webhookInbox, setWebhookInbox] = useState<WebhookInboxRow[]>([]);
   const [showFixtures, setShowFixtures] = useState(false);
@@ -125,28 +127,113 @@ export function RecoveryDesk() {
   } | null>(null);
   const mrrPrev = useRef<number | null>(null);
   const pollTimer = useRef<number | null>(null);
+  const mrrPollTimer = useRef<number | null>(null);
   const passcodeRef = useRef(demoPasscode);
   passcodeRef.current = demoPasscode;
+  const optimisticRef = useRef(optimisticRecovered);
+  optimisticRef.current = optimisticRecovered;
 
-  const refreshBoards = useCallback(async () => {
+  const recovered = mergeRecoveredBoard(serverRecovered, optimisticRecovered);
+  const recoveredTotal = sumRecoveredBoardUsd(recovered);
+
+  const applyServerMrr = useCallback((rows: RecoveredBoardRow[]) => {
+    setServerRecovered(rows);
+  }, []);
+
+  const ingestOptimisticRecovery = useCallback((raw: unknown) => {
+    const row = coerceRecoveredBoardRow(raw);
+    if (!row) return null;
+    setOptimisticRecovered((prev) => upsertOptimisticRecovered(prev, row));
+    return row;
+  }, []);
+
+  const refreshBoards = useCallback(async (): Promise<{
+    rows: RecoveredBoardRow[];
+    totalUsd: number;
+  } | null> => {
     try {
       const [mrrRes, whRes] = await Promise.all([
         fetch("/api/recovered-mrr", { cache: "no-store" }),
         fetch("/api/webhooks/inbox", { cache: "no-store" }),
       ]);
       const mrr = await mrrRes.json();
+      let board: { rows: RecoveredBoardRow[]; totalUsd: number } | null = null;
       if (mrrRes.ok) {
-        setRecovered(mrr.rows || []);
-        setRecoveredTotal(typeof mrr.totalUsd === "number" ? mrr.totalUsd : 0);
+        const rows = (mrr.rows || []) as RecoveredBoardRow[];
+        // Merge overlay in display; never wipe optimistic on lag/empty.
+        applyServerMrr(rows);
+        board = {
+          rows: mergeRecoveredBoard(rows, optimisticRef.current),
+          totalUsd: sumRecoveredBoardUsd(
+            mergeRecoveredBoard(rows, optimisticRef.current)
+          ),
+        };
       }
       const wh = await whRes.json();
       if (whRes.ok) {
         setWebhookInbox(wh.events || []);
       }
+      return board;
     } catch {
       /* boards are secondary — don't block desk */
+      return null;
     }
-  }, []);
+  }, [applyServerMrr]);
+
+  /** After RECOVERED: poll board until PayPal txn appears or total rises. */
+  function startMrrConfirmPoll(opts: {
+    baselineTotal: number;
+    transactionId: string | null;
+    proposalId?: string;
+    rowId?: string;
+  }) {
+    if (mrrPollTimer.current != null) {
+      window.clearTimeout(mrrPollTimer.current);
+      mrrPollTimer.current = null;
+    }
+
+    const tick = async (attempt: number) => {
+      if (attempt >= MRR_POLL_MAX_ATTEMPTS) {
+        mrrPollTimer.current = null;
+        return;
+      }
+      try {
+        const board = await refreshBoards();
+        if (board) {
+          const totalUp = board.totalUsd > opts.baselineTotal + 1e-9;
+          const txnSeen = serverHasRecovery(board.rows, {
+            transactionId: opts.transactionId,
+            proposalId: opts.proposalId,
+            id: opts.rowId,
+          });
+          if (totalUp || txnSeen) {
+            mrrPollTimer.current = null;
+            return;
+          }
+        }
+      } catch {
+        /* keep polling */
+      }
+      mrrPollTimer.current = window.setTimeout(() => {
+        void tick(attempt + 1);
+      }, POLL_INTERVAL_MS);
+    };
+
+    mrrPollTimer.current = window.setTimeout(() => {
+      void tick(0);
+    }, POLL_INTERVAL_MS);
+  }
+
+  function handleRecoveredResult(data: ApproveResult) {
+    const baseline = recoveredTotal;
+    const row = ingestOptimisticRecovery(data.recovered);
+    startMrrConfirmPoll({
+      baselineTotal: baseline,
+      transactionId: row?.transactionId ?? null,
+      proposalId: row?.proposalId,
+      rowId: row?.id,
+    });
+  }
 
   /** Reload subscriptions without wiping proposal / approve UI (poll + settle). */
   const refreshSubsSilent = useCallback(async (): Promise<DeskSub[]> => {
@@ -209,6 +296,8 @@ export function RecoveryDesk() {
   useEffect(() => {
     return () => {
       if (pollTimer.current != null) window.clearTimeout(pollTimer.current);
+      if (mrrPollTimer.current != null)
+        window.clearTimeout(mrrPollTimer.current);
     };
   }, []);
 
@@ -292,6 +381,9 @@ export function RecoveryDesk() {
           setApproveResult(settled);
           if (settled.deskStatus === "RECOVERED" || settled.ok) {
             setPendPoll(null);
+            if (settled.deskStatus === "RECOVERED") {
+              handleRecoveredResult(settled);
+            }
             await refreshSubsSilent();
             return;
           }
@@ -353,6 +445,9 @@ export function RecoveryDesk() {
         return;
       }
       setApproveResult(data);
+      if (data.deskStatus === "RECOVERED") {
+        handleRecoveredResult(data);
+      }
       await refreshSubsSilent();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Approve failed");
@@ -665,6 +760,7 @@ export function RecoveryDesk() {
         </div>
         <p className="hint" style={{ marginBottom: "0.65rem" }}>
           Verified PayPal recoveries only — outstanding cleared after Approve.
+          Approve rows stay visible until PayPal txn list catches up.
         </p>
         <div className="board">
           {recovered.length === 0 ? (

@@ -43,4 +43,17 @@ describe("recovered MRR txn rule (probe-informed)", () => {
       false
     );
   });
+
+  it("excludes COMPLETED below $5 (txn ≥ $5 filter unchanged)", () => {
+    assert.equal(
+      isRecoveredTransaction({
+        id: "UNDER",
+        status: "COMPLETED",
+        amount_with_breakdown: {
+          gross_amount: { currency_code: "USD", value: "4.99" },
+        },
+      }),
+      false
+    );
+  });
 });
