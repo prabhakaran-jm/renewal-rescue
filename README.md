@@ -1,90 +1,70 @@
 # Renewal Rescue
 
-Recover **involuntary** MRR when a PayPal subscription renewal fails — capture outstanding or revise cheaper (retention), with AI propose + policy + human Approve.
+Recover **involuntary** MRR when a PayPal subscription renewal fails — AI proposes a capture or revise, policy gates it, and a human merchant Approves. Live money moves only on Approve.
 
-**Never** treat Webhooks Simulator as money proof. Fixture rows with `$0` outstanding are labeled **FIXTURE**.
+**Demo:** [https://renewal-rescue.vercel.app](https://renewal-rescue.vercel.app)
 
-## Prerequisites
+**Never** treat Webhooks Simulator as money proof. Fixture / `$0` outstanding rows are labeled fixture and hidden on the desk by default.
 
-1. Sandbox business + personal accounts; app Client ID/Secret in `.env` (see `.env.example`).
-2. Oct 30 seed complete — `fixtures/seed-ids.json` with 4 subscription ids.
-3. Node 20+.
+## Judge setup (sandbox)
 
-## Recovery desk (Step 5)
+1. Open [https://renewal-rescue.vercel.app](https://renewal-rescue.vercel.app).
+2. Click **Refresh** — live outstanding shells appear (customer-style labels).
+3. Select a row → **Propose** (Gemini badge + customer draft when AI path succeeds; Fallback / RULE otherwise).
+4. Optional: **Deny demo** (write-off) → blocked by policy; badge shows `RULE · write-off test`.
+5. **Approve / Deny** require the demo passcode (`DEMO_PASSCODE` on the deployment). Ask the team for the judge passcode — do not invent one.
+6. Leave spare outstanding shells for other judges. Do **not** Approve `I-S5J71BPHJBT3` or `I-FWR8V1TKDEFW` unless instructed.
+
+Local:
 
 ```bash
+cp .env.example .env   # fill PayPal + GEMINI_* + DEMO_PASSCODE + PROPOSAL_SIGNING_SECRET
 npm install
-npm run dev
-# → http://localhost:3000
+npm run dev            # http://localhost:3000
+npm test
+npm run build
 ```
 
-Desk behavior:
+## Failure → Behaviour → Recovery
 
-| Step | What |
-| --- | --- |
-| Refresh | Lists seeded subs via live `GET /v1/billing/subscriptions/{id}` |
-| Propose | Deterministic schema `{capture_outstanding \| revise_cheaper \| retry_later \| escalate}` + policy gate |
-| FIXTURE | When outstanding is `$0` — diagnosis only, not verified recovery |
-| Preferred capture | `I-3HK9STH33F7F` (`judge-demo-outstanding`) — SUSPENDED + outstanding **5.0**; do not capture until filming |
-| Money-proof history | `I-J8R13K0F76X4` (`setup-fee-continue`) — kept listed; see Step 6 |
-| Approve | Re-checks policy; **capture only if outstanding > 0**; revise returns **buyer approve URL** (retention / next cycle) |
-| Deny / write-off demo | Policy refuses write-offs |
+| Failure | Desk behaviour | Recovery |
+| --- | --- | --- |
+| Renewal charge fails; subscription **SUSPENDED** with outstanding &gt; 0 | Refresh shows live outstanding; Propose suggests `capture_outstanding` (or revise) | Merchant Approve → PayPal outstanding-balance capture (`PayPal-Request-Id` = proposal token id) |
+| Capture accepted async (HTTP 202) | Amber **Pending PayPal confirmation**; desk polls outstanding (~5s, bounded) | When outstanding hits `$0`, settle → **RECOVERED**, activate attempt (SUSPENDED→ACTIVE), MRR board updates (optimistic row until PayPal txn list catches up) |
+| Merchant wants retention instead of cash now | **Revise** → cheaper plan proposal | Buyer approve URL for next-cycle price; **not** recovered cash |
+| Write-off / 100% forgive demo | **Deny demo** propose path | Policy blocks; no capture |
+| AI timeout / 429 / malformed / policy fail | Propose still returns a deterministic proposal | Badge shows **Fallback** (never mislabeled as Gemini) |
 
-**Do not auto-capture.** Money APIs run only after merchant Approve. Empty/async PayPal capture (HTTP 202) must **not** be labeled RECOVERED until live outstanding is cleared.
+## Idempotency
 
-### Step 6 money proof (2026-10-31)
+- **Capture:** `PayPal-Request-Id` is the proposal token short id — safe to re-Approve while settling CAPTURE_PEND / CAPTURE_IN_PROGRESS.
+- **Revise:** **no** PayPal idempotency key. Re-Approve may create another revise / buyer-approve link. Treat revise as non-idempotent.
 
-Verified on sandbox for `I-J8R13K0F76X4` (history — not the preferred desk target anymore):
+## DEMO_PASSCODE (testing)
 
-| Proof | Detail |
-| --- | --- |
-| Capture txn | **COMPLETED** `$5.00` id `7RG29592AA729850V` (12:46 Europe/London) |
-| After | `check:daily` → outstanding **0.0 USD**, failed **0**; status may stay **SUSPENDED** |
-| Trail | Approve → HTTP **202** / desk `CAPTURE_PEND` → **422** `CAPTURE_IN_PROGRESS` → cleared |
-| Artifact | [`fixtures/money-proof/I-J8R13K0F76X4-2026-10-31.json`](./fixtures/money-proof/I-J8R13K0F76X4-2026-10-31.json) |
+Approve and Deny require `DEMO_PASSCODE` (compared with `timingSafeEqual`). Wrong passcode → **401**, no PayPal money call. Money-safe smoke:
 
-### Step 7 judge re-seed (2026-10-31)
+```bash
+npm run smoke:money-safe
+```
 
-Preferred shell **`I-3HK9STH33F7F`** — live **SUSPENDED** + outstanding **5.0 USD**. `I-1Y3BCF7UX186` is superseded (ACTIVE / 0). Restore buyer funding, Refresh desk, Propose — **do not Approve/capture until filming**. Prefer `SEED_SUBSCRIPTION_ID=I-3HK9STH33F7F`. Money-proof history: `I-J8R13K0F76X4`.
+Never commit the real passcode. Never log it.
 
-### Step 9B Recovered MRR + Step 9A webhooks
+## Recovered MRR
 
-- Desk board: verified recoveries only (`fixtures/recovered-mrr/seed.json` = txn `7RG29592AA729850V` / `$5` on `I-J8R13K0F76X4`). Approve → RECOVERED appends to `fixtures/recovered-mrr/log.ndjson`.
-- `GET /api/recovered-mrr` — board JSON
-- `POST /api/webhooks/paypal` — signature verify via PayPal + persist (needs public tunnel + `PAYPAL_WEBHOOK_ID`)
-- `GET /api/webhooks/inbox` — recent verified events for desk
-- Simulator = optional smoke only — never money proof. Do not capture live outstanding in Step 9.
+Board rule (probe-informed): live subscription transactions with status **COMPLETED** and USD gross **≥ $5** (excludes `$1` setup fee). After Approve **RECOVERED**, the desk merges the response row optimistically and polls `GET /api/recovered-mrr` until the txn appears or the total rises — Vercel lambdas do not share session memory.
 
-### API sketch
+Always-probed history ids (even if env seed list is trimmed): `I-J8R13K0F76X4` (money proof), `I-CNCX69GD2UD8` (cleared film), `I-3FSFGWWRAV4D` (smoke).
+
+## API sketch
 
 - `GET /api/subscriptions` — seed ids + live PayPal refresh
-- `POST /api/proposals` — body `{ subscriptionId?, demoWriteOff?, forceRevise? }`
-- `POST /api/proposals/:id/approve` — capture / revise / no-op; RECOVERED appends recovered-MRR row
+- `POST /api/proposals` — `{ subscriptionId?, demoWriteOff?, forceRevise? }`
+- `POST /api/proposals/:id/approve` — passcode → capture / revise / settle
 - `POST /api/proposals/:id/deny`
 - `GET /api/recovered-mrr` — verified recoveries board
-- `POST /api/webhooks/paypal` — verified webhook ingest
-- `GET /api/webhooks/inbox` — desk inbox
-
-### Validate (no live capture)
-
-```bash
-npm run test:policy
-npm run build
-npm run check:daily
-# With `npm run dev` running:
-curl -s http://localhost:3000/api/subscriptions
-curl -s -X POST http://localhost:3000/api/proposals -H "content-type: application/json" -d "{\"subscriptionId\":\"I-3HK9STH33F7F\"}"
-```
-
-## Seed scripts (Oct 30 SET UP)
-
-See [`scripts/seed/README.md`](./scripts/seed/README.md).
-
-```bash
-npm run seed:all
-npm run check:daily
-npm run webhook:dev
-```
+- `POST /api/webhooks/paypal` — signature verify + inbox
+- `GET /api/webhooks/inbox`
 
 ## Policy (deterministic)
 
@@ -92,6 +72,23 @@ npm run webhook:dev
 - Capture only if outstanding &gt; 0; amount ≤ outstanding; amount ≥ `minCapturePct` (50%) of outstanding
 - Revise discount ≤ `maxDiscountPct` (30%); next-cycle **retention**, not recovered cash
 
+## AI tools disclosure (DevPost)
+
+| Tool | Role |
+| --- | --- |
+| **Google Gemini** | In-product propose (`generateContent` JSON); amounts/IDs enforced in code; Fallback when timeout/error/schema/policy fail |
+| **Cursor / coding assistants** | Used to scaffold, implement, and test the desk |
+| **APIMatic Context Plugin** | Used during build for PayPal API context (sponsor prize target) when available |
+
+## Seed scripts
+
+See [`scripts/seed/README.md`](./scripts/seed/README.md).
+
+```bash
+npm run seed:all
+npm run check:daily
+```
+
 ## License
 
-OSS — add `LICENSE` before Devpost submit.
+[MIT](./LICENSE)

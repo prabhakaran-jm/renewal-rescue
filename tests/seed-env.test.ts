@@ -1,7 +1,9 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
+  ALWAYS_PROBE_RECOVERED_MRR_IDS,
   preferredCaptureId,
+  recoveredMrrSubscriptionIds,
   resolveSeedSubscriptionEntries,
   sanitizePaypalSubscriptionId,
 } from "../src/lib/desk/seed.ts";
@@ -57,5 +59,16 @@ describe("resolveSeedSubscriptionEntries (Vercel env-only)", () => {
     process.env.SEED_SUBSCRIPTION_ID =
       "SEED_SUBSCRIPTION_ID=I-CNCX69GD2UD8";
     assert.equal(preferredCaptureId(), "I-CNCX69GD2UD8");
+  });
+
+  it("recoveredMrrSubscriptionIds always includes money-proof history ids", () => {
+    // Trimmed env (judge spares only) — still probe history / film / smoke
+    process.env.SEED_SUBSCRIPTION_IDS = "I-S5J71BPHJBT3,I-FWR8V1TKDEFW";
+    const ids = recoveredMrrSubscriptionIds();
+    for (const must of ALWAYS_PROBE_RECOVERED_MRR_IDS) {
+      assert.ok(ids.includes(must), `missing always-probe id ${must}`);
+    }
+    assert.ok(ids.includes("I-S5J71BPHJBT3"));
+    assert.ok(ids.includes("I-FWR8V1TKDEFW"));
   });
 });
