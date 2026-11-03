@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Money = { currency_code: string; value: string };
 
@@ -70,7 +70,7 @@ type WebhookInboxRow = {
 export function RecoveryDesk() {
   const [subs, setSubs] = useState<DeskSub[]>([]);
   const [preferredCaptureId, setPreferredCaptureId] = useState(
-    "I-3HK9STH33F7F"
+    "I-CNCX69GD2UD8"
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +81,9 @@ export function RecoveryDesk() {
   const [demoPasscode, setDemoPasscode] = useState("");
   const [recovered, setRecovered] = useState<RecoveredRow[]>([]);
   const [recoveredTotal, setRecoveredTotal] = useState(0);
+  const [mrrPulse, setMrrPulse] = useState(false);
   const [webhookInbox, setWebhookInbox] = useState<WebhookInboxRow[]>([]);
+  const mrrPrev = useRef<number | null>(null);
 
   const refreshBoards = useCallback(async () => {
     try {
@@ -132,6 +134,19 @@ export function RecoveryDesk() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once
   }, []);
 
+  useEffect(() => {
+    if (mrrPrev.current === null) {
+      mrrPrev.current = recoveredTotal;
+      return;
+    }
+    if (mrrPrev.current !== recoveredTotal) {
+      mrrPrev.current = recoveredTotal;
+      setMrrPulse(true);
+      const t = window.setTimeout(() => setMrrPulse(false), 700);
+      return () => window.clearTimeout(t);
+    }
+  }, [recoveredTotal]);
+
   async function propose(opts?: {
     demoWriteOff?: boolean;
     forceRevise?: boolean;
@@ -157,7 +172,7 @@ export function RecoveryDesk() {
     const isCapture = proposal.proposal.action === "capture_outstanding";
     if (isCapture) {
       const ok = window.confirm(
-        `Approve LIVE capture on ${proposal.proposal.subscriptionId}?\n\nThis calls PayPal OUTSTANDING_BALANCE capture. Only proceed when ready (Step 6 money proof). Cancel to stay on Step 5 dry review.`
+        `Approve LIVE capture on ${proposal.proposal.subscriptionId}?\n\nThis calls PayPal OUTSTANDING_BALANCE capture. Only proceed when ready for a live recovery. Cancel to stay on dry review.`
       );
       if (!ok) return;
     }
@@ -212,88 +227,29 @@ export function RecoveryDesk() {
     setApproveResult(data);
   }
 
+  const policyOk =
+    Boolean(proposal?.policy.ok) && proposal?.status !== "BLOCKED";
+  const aiIsGemini = proposal?.ai?.source === "gemini";
+
   return (
-    <main>
-      <h1>Renewal Rescue</h1>
-      <p className="sub">
-        Recovery desk - seeded subscriptions with live PayPal refresh. AI
-        propose, policy gate, merchant Approve. Capture only when outstanding
-        &gt; 0. Prefer{" "}
-        <code>{preferredCaptureId}</code> for the live capture path. Never
-        auto-capture; Webhooks Simulator is not money proof.
-      </p>
-
-      <div className="banner">
-        Step 9B board shows verified recoveries only (money-proof seed + Approve
-        RECOVERED). Do not Approve live capture on{" "}
-        <code>{preferredCaptureId}</code> until filming (Step PP-26). List +
-        Propose are safe. Webhooks Simulator is never money proof.
-      </div>
-
-      <section className="panel">
-        <h2>
-          Recovered MRR{" "}
-          <span className="badge live">
-            ${recoveredTotal.toFixed(2)} USD verified
-          </span>
-        </h2>
-        <p className="sub" style={{ marginBottom: "0.75rem" }}>
-          Real PayPal-backed rows only. Seed: txn{" "}
-          <code>7RG29592AA729850V</code> on <code>I-J8R13K0F76X4</code>. Future
-          Approve → RECOVERED (outstanding cleared) appends here — e.g.{" "}
-          <code>I-3HK9STH33F7F</code> when filmed.
+    <main className="desk">
+      <header className="brand-block">
+        <h1 className="brand">Renewal Rescue</h1>
+        <p className="lede">
+          Recover failed subscription renewals — propose with AI, gate with
+          policy, approve as the merchant. Capture only when outstanding is
+          live; never auto-capture.
         </p>
-        {recovered.length === 0 ? (
-          <p className="sub">No verified recoveries yet.</p>
-        ) : (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Subscription</th>
-                  <th>Amount</th>
-                  <th>Txn</th>
-                  <th>Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recovered.map((r) => (
-                  <tr key={r.id}>
-                    <td>{new Date(r.recoveredAt).toLocaleString()}</td>
-                    <td>
-                      <code>{r.subscriptionId}</code>
-                      {r.pathKey ? (
-                        <span className="muted"> · {r.pathKey}</span>
-                      ) : null}
-                    </td>
-                    <td>
-                      <strong>
-                        {r.amountRecovered.value}{" "}
-                        {r.amountRecovered.currency_code}
-                      </strong>
-                    </td>
-                    <td>
-                      {r.transactionId ? (
-                        <code>{r.transactionId}</code>
-                      ) : (
-                        <span className="muted">n/a</span>
-                      )}
-                    </td>
-                    <td>
-                      <span className="badge live">{r.source}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      </header>
 
-      <div className="toolbar">
-        <button type="button" className="primary" onClick={() => void refresh()} disabled={loading}>
-          {loading ? "Refreshing…" : "Refresh live"}
+      <div className="toolbar" aria-label="Desk actions">
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void refresh()}
+          disabled={loading}
+        >
+          {loading ? "Refreshing…" : "Refresh"}
         </button>
         <button
           type="button"
@@ -304,10 +260,11 @@ export function RecoveryDesk() {
         </button>
         <button
           type="button"
+          className="ghost"
           onClick={() => void propose({ forceRevise: true })}
           disabled={!selectedId}
         >
-          Propose revise (retention)
+          Revise
         </button>
         <button
           type="button"
@@ -315,117 +272,145 @@ export function RecoveryDesk() {
           onClick={() => void propose({ demoWriteOff: true })}
           disabled={!selectedId}
         >
-          Demo deny (write-off)
+          Deny demo
         </button>
       </div>
 
-      <div className="grid">
-        {subs.map((s) => (
-          <label
-            key={s.id}
-            className={`row${s.preferredCaptureTarget ? " preferred" : ""}`}
-          >
-            <div className="badges">
-              {s.preferredCaptureTarget && (
-                <span className="badge live">Preferred capture</span>
-              )}
-              {s.outstandingValue > 0 ? (
-                <span className="badge live">Live outstanding</span>
-              ) : (
-                <span className="badge fixture">FIXTURE $0</span>
-              )}
-              <span className="badge warn">{s.status}</span>
-            </div>
-            <div className="meta">
-              <span>
+      <section className="section" aria-labelledby="subs-heading">
+        <div className="section-head">
+          <h2 id="subs-heading">Subscriptions</h2>
+          <p className="hint">
+            Select a row, then Propose. Quiet badges mark live balance vs
+            fixture.
+          </p>
+        </div>
+        <div className="sub-grid">
+          {subs.map((s) => {
+            const selected = selectedId === s.id;
+            return (
+              <label
+                key={s.id}
+                className={`sub-row${selected ? " selected" : ""}`}
+              >
                 <input
                   type="radio"
                   name="sub"
-                  checked={selectedId === s.id}
+                  checked={selected}
                   onChange={() => setSelectedId(s.id)}
-                />{" "}
-                <strong>{s.key}</strong>
-              </span>
-              <span>
-                id <strong>{s.id}</strong>
-              </span>
-              <span>
-                outstanding{" "}
-                <strong>
-                  {s.outstanding
-                    ? `${s.outstanding.value} ${s.outstanding.currency_code}`
-                    : "0"}
-                </strong>
-              </span>
-              <span>
-                failed <strong>{s.failedPaymentsCount ?? "n/a"}</strong>
-              </span>
-              <span>path {s.failurePath}</span>
-            </div>
-          </label>
-        ))}
-      </div>
+                  aria-label={`Select ${s.key}`}
+                />
+                <div className="sub-row-body">
+                  <div className="sub-row-top">
+                    <span className="path">{s.key}</span>
+                    {s.preferredCaptureTarget ? (
+                      <span className="badge quiet-live">Preferred</span>
+                    ) : null}
+                    {s.outstandingValue > 0 ? (
+                      <span className="badge quiet-live">Outstanding</span>
+                    ) : (
+                      <span className="badge quiet-fixture">Fixture</span>
+                    )}
+                    <span className="badge quiet-status">{s.status}</span>
+                  </div>
+                  <div className="sub-metrics">
+                    <div>
+                      <span className="label">Id</span>
+                      <strong>{s.id}</strong>
+                    </div>
+                    <div>
+                      <span className="label">Outstanding</span>
+                      <strong>
+                        {s.outstanding
+                          ? `${s.outstanding.value} ${s.outstanding.currency_code}`
+                          : "0"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="label">Status</span>
+                      <strong>{s.status}</strong>
+                    </div>
+                    <div>
+                      <span className="label">Failed</span>
+                      <strong>{s.failedPaymentsCount ?? "n/a"}</strong>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </section>
 
       {proposal && (
-        <section className="panel">
-          <h2>
-            Proposal{" "}
+        <section
+          className="proposal-panel"
+          aria-labelledby="proposal-heading"
+        >
+          <h2 id="proposal-heading" className="proposal-title">
+            Proposal
             {proposal.proposal.fixtureLabeled ? (
-              <span className="badge fixture">FIXTURE</span>
+              <span className="badge quiet-fixture">Fixture</span>
             ) : (
-              <span className="badge live">LIVE candidate</span>
-            )}{" "}
-            {proposal.ai?.source === "gemini" ? (
-              <span className="badge live">Gemini</span>
-            ) : (
-              <span className="badge warn">
-                Fallback
-                {proposal.ai?.reason ? ` · ${proposal.ai.reason}` : ""}
-              </span>
-            )}{" "}
-            · {proposal.status}
+              <span className="badge quiet-live">Live candidate</span>
+            )}
+            <span className="muted">· {proposal.status}</span>
           </h2>
-          <div className="meta">
+
+          <div
+            className={`ai-spotlight${aiIsGemini ? "" : " fallback"}`}
+          >
+            <div className="ai-label">
+              {aiIsGemini ? (
+                <span className="badge ai-gemini">Gemini</span>
+              ) : (
+                <span className="badge ai-fallback">
+                  Fallback
+                  {proposal.ai?.reason ? ` · ${proposal.ai.reason}` : ""}
+                </span>
+              )}
+              {proposal.ai?.model ? (
+                <span className="muted">{proposal.ai.model}</span>
+              ) : null}
+            </div>
+            <p className="customer-draft">
+              <em>Customer draft</em>
+              {proposal.customerMessage?.trim()
+                ? proposal.customerMessage
+                : "No customer draft from this propose path."}
+            </p>
+          </div>
+
+          <div className="proposal-meta">
             <span>
-              action <strong>{proposal.proposal.action}</strong>
+              Action <strong>{proposal.proposal.action}</strong>
             </span>
             <span>
-              policy{" "}
+              Policy{" "}
               <strong>
                 {proposal.policy.ok
                   ? "OK"
-                  : `BLOCKED - ${proposal.policy.reason}`}
+                  : `Blocked — ${proposal.policy.reason}`}
               </strong>
             </span>
           </div>
-          <p className="sub" style={{ marginBottom: 0 }}>
-            {proposal.proposal.rationale}
-          </p>
-          {proposal.customerMessage ? (
-            <p className="sub" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
-              <strong>Customer draft:</strong> {proposal.customerMessage}
-            </p>
-          ) : null}
-          <label className="sub" style={{ display: "block", marginTop: "0.75rem" }}>
-            Demo passcode{" "}
+          <p className="rationale">{proposal.proposal.rationale}</p>
+
+          <label className="passcode-field">
+            Demo passcode
             <input
               type="password"
               autoComplete="off"
               value={demoPasscode}
               onChange={(e) => setDemoPasscode(e.target.value)}
-              placeholder="DEMO_PASSCODE"
-              style={{ marginLeft: "0.5rem" }}
+              placeholder="Required for Approve / Deny"
             />
           </label>
-          <div className="toolbar" style={{ marginTop: "0.75rem" }}>
+
+          <div className="proposal-actions">
             <button
               type="button"
-              className="primary"
-              disabled={
-                approveBusy ||
-                !proposal.policy.ok ||
-                proposal.status === "BLOCKED"
-              }
+              className={policyOk ? "primary" : "ghost"}
+              disabled={approveBusy || !policyOk}
               onClick={() => void approve()}
             >
               {approveBusy ? "Approving…" : "Approve"}
@@ -434,77 +419,144 @@ export function RecoveryDesk() {
               Deny
             </button>
           </div>
-          <pre>{JSON.stringify(proposal, null, 2)}</pre>
+
+          <details className="raw-json">
+            <summary>Raw proposal JSON</summary>
+            <pre>{JSON.stringify(proposal, null, 2)}</pre>
+          </details>
         </section>
       )}
 
       {approveResult != null && (
-        <section className="panel">
-          <h2>Approve / Deny result</h2>
-          <pre>{JSON.stringify(approveResult, null, 2)}</pre>
+        <section className="section">
+          <div className="section-head">
+            <h2>Approve / Deny result</h2>
+          </div>
+          <div className="board">
+            <details className="raw-json" open>
+              <summary>Result payload</summary>
+              <pre>{JSON.stringify(approveResult, null, 2)}</pre>
+            </details>
+          </div>
         </section>
       )}
 
-      <section className="panel">
-        <h2>
-          Webhook inbox{" "}
-          <span className="badge fixture">verified signatures only</span>
-        </h2>
-        <p className="sub" style={{ marginBottom: "0.75rem" }}>
-          Recent events from <code>POST /api/webhooks/paypal</code> after
-          PayPal signature verify. Subscription/payment events highlighted.
-          Simulator = optional smoke only — never money proof.
+      <section className="section" aria-labelledby="mrr-heading">
+        <div className="section-head">
+          <h2 id="mrr-heading">Recovered MRR</h2>
+          <span className={`mrr-total${mrrPulse ? " pulse" : ""}`}>
+            ${recoveredTotal.toFixed(2)} USD
+          </span>
+        </div>
+        <p className="hint" style={{ marginBottom: "0.65rem" }}>
+          Verified PayPal recoveries only — outstanding cleared after Approve.
         </p>
-        {webhookInbox.length === 0 ? (
-          <p className="sub">
-            No events yet. Needs public tunnel +{" "}
-            <code>PAYPAL_WEBHOOK_ID</code> (see Step 9A doc).
-          </p>
-        ) : (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Received</th>
-                  <th>Event</th>
-                  <th>Resource</th>
-                  <th>Flags</th>
-                </tr>
-              </thead>
-              <tbody>
-                {webhookInbox.map((e, i) => (
-                  <tr key={`${e.eventId || "ev"}-${i}`}>
-                    <td>{new Date(e.receivedAt).toLocaleString()}</td>
-                    <td>
-                      <code>{e.eventType || "unknown"}</code>
-                      {e.interesting ? (
-                        <>
-                          {" "}
-                          <span className="badge live">interest</span>
-                        </>
-                      ) : null}
-                    </td>
-                    <td>
-                      {e.resourceId ? (
-                        <code>{e.resourceId}</code>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td>
-                      {e.duplicate ? (
-                        <span className="badge warn">dup</span>
-                      ) : (
-                        <span className="badge live">new</span>
-                      )}{" "}
-                      <span className="badge fixture">not money proof</span>
-                    </td>
+        <div className="board">
+          {recovered.length === 0 ? (
+            <p className="empty">No verified recoveries yet.</p>
+          ) : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Subscription</th>
+                    <th>Amount</th>
+                    <th>Txn</th>
+                    <th>Source</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {recovered.map((r) => (
+                    <tr key={r.id}>
+                      <td>{new Date(r.recoveredAt).toLocaleString()}</td>
+                      <td>
+                        <code>{r.subscriptionId}</code>
+                        {r.pathKey ? (
+                          <span className="muted"> · {r.pathKey}</span>
+                        ) : null}
+                      </td>
+                      <td>
+                        <strong>
+                          {r.amountRecovered.value}{" "}
+                          {r.amountRecovered.currency_code}
+                        </strong>
+                      </td>
+                      <td>
+                        {r.transactionId ? (
+                          <code>{r.transactionId}</code>
+                        ) : (
+                          <span className="muted">n/a</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className="badge quiet-live">{r.source}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="section" aria-labelledby="wh-heading">
+        <div className="section-head">
+          <h2 id="wh-heading">Webhook inbox</h2>
+          <p className="hint">Verified signatures only — not money proof.</p>
+        </div>
+        <div className="board">
+          {webhookInbox.length === 0 ? (
+            <p className="empty">
+              No events yet. Register the production webhook URL with PayPal
+              and set PAYPAL_WEBHOOK_ID.
+            </p>
+          ) : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>Received</th>
+                    <th>Event</th>
+                    <th>Resource</th>
+                    <th>Flags</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {webhookInbox.map((e, i) => (
+                    <tr key={`${e.eventId || "ev"}-${i}`}>
+                      <td>{new Date(e.receivedAt).toLocaleString()}</td>
+                      <td>
+                        <code>{e.eventType || "unknown"}</code>
+                        {e.interesting ? (
+                          <>
+                            {" "}
+                            <span className="badge quiet-live">interest</span>
+                          </>
+                        ) : null}
+                      </td>
+                      <td>
+                        {e.resourceId ? (
+                          <code>{e.resourceId}</code>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td>
+                        {e.duplicate ? (
+                          <span className="badge quiet-status">dup</span>
+                        ) : (
+                          <span className="badge quiet-live">new</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </section>
 
       {error && <p className="err">{error}</p>}
