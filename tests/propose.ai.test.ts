@@ -1,6 +1,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildPrompt,
   clearProposeCache,
   proposeDeterministic,
   proposeForSubscription,
@@ -48,11 +49,12 @@ beforeEach(() => {
 });
 
 describe("proposeDeterministic (rule paths)", () => {
-  it("demo write-off stays rule-based escalate", () => {
+  it("demo write-off stays rule-based escalate with RULE badge provenance", () => {
     const r = proposeDeterministic(makeSub(), { demoWriteOff: true });
     assert.equal(r.proposal.action, "escalate");
-    assert.equal(r.ai.source, "fallback");
-    assert.equal(r.ai.reason, "demo_write_off");
+    assert.equal(r.ai.source, "rule");
+    assert.equal(r.ai.reason, "write-off test");
+    assert.equal(r.ai.model, "");
   });
 
   it("force revise stays rule-based 30% discount", () => {
@@ -60,6 +62,16 @@ describe("proposeDeterministic (rule paths)", () => {
     assert.equal(r.proposal.action, "revise_cheaper");
     assert.equal(r.proposal.proposedPrice?.value, "3.50");
     assert.equal(r.ai.source, "fallback");
+  });
+
+  it("Gemini prompt omits preferredCaptureTarget", () => {
+    const prompt = buildPrompt(
+      makeSub({ preferredCaptureTarget: true, fixtureLabeled: false })
+    );
+    assert.equal(prompt.includes("Preferred capture target"), false);
+    assert.equal(prompt.includes("preferredCaptureTarget"), false);
+    assert.match(prompt, /Outstanding:/);
+    assert.match(prompt, /Subscription status:/);
   });
 });
 

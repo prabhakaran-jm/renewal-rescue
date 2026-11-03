@@ -97,3 +97,18 @@ export async function reviseSubscription(
     body: { plan_id: planId },
   });
 }
+
+/**
+ * Reactivate a SUSPENDED subscription after outstanding is cleared.
+ * Only call from merchant Approve (same passcode gate) once money proof holds.
+ */
+export async function activateSubscription(
+  subscriptionId: string,
+  reason = "Renewal Rescue — outstanding cleared; resume billing"
+): Promise<{ status?: string; id?: string; httpStatus?: number }> {
+  return paypalFetch(`/v1/billing/subscriptions/${subscriptionId}/activate`, {
+    method: "POST",
+    prefer: "return=representation",
+    body: { reason },
+  });
+}

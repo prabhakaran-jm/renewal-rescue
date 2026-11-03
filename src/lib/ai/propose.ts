@@ -31,7 +31,8 @@ export type ProposeOpts = {
 };
 
 export type AiProvenance = {
-  source: "gemini" | "fallback";
+  /** rule = film Deny / write-off test (never mislabel as Gemini fallback) */
+  source: "gemini" | "fallback" | "rule";
   model: string;
   reason?: string;
 };
@@ -133,7 +134,8 @@ export function proposeDeterministic(
         fixtureLabeled: true,
       },
       policy,
-      ai: { source: "fallback", model, reason: "demo_write_off" },
+      // Desk badge: RULE · write-off test (no FALLBACK + Gemini model)
+      ai: { source: "rule", model: "", reason: "write-off test" },
     };
   }
 
@@ -235,7 +237,8 @@ function buildFromModelAction(
   };
 }
 
-function buildPrompt(sub: DeskSubscription): string {
+/** Exported for tests — must not include preferredCaptureTarget. */
+export function buildPrompt(sub: DeskSubscription): string {
   const outstanding = sub.outstandingValue;
   const currency = sub.outstanding?.currency_code || "USD";
   return [
@@ -248,7 +251,6 @@ function buildPrompt(sub: DeskSubscription): string {
     `Subscription status: ${sub.status}`,
     `Outstanding: ${outstanding} ${currency}`,
     `Failed payments count: ${sub.failedPaymentsCount ?? "unknown"}`,
-    `Preferred capture target: ${sub.preferredCaptureTarget ? "yes" : "no"}`,
     `Fixture labeled ($0): ${sub.fixtureLabeled ? "yes" : "no"}`,
     "",
     "Return JSON only matching the schema.",
