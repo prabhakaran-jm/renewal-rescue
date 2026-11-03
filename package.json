@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx --tsconfig tsconfig.json --test tests/policy.engine.test.ts tests/propose.ai.test.ts tests/proposal-token.test.ts tests/recovered-mrr.test.ts tests/passcode.test.ts tests/seed-env.test.ts",
+    "test": "tsx --tsconfig tsconfig.json --test tests/policy.engine.test.ts tests/propose.ai.test.ts tests/proposal-token.test.ts tests/recovered-mrr.test.ts tests/merge-recovered.test.ts tests/passcode.test.ts tests/seed-env.test.ts",
     "test:policy": "tsx --tsconfig tsconfig.json --test tests/policy.engine.test.ts",
     "test:ai": "tsx --tsconfig tsconfig.json --test tests/propose.ai.test.ts",
     "test:tokens": "tsx --tsconfig tsconfig.json --test tests/proposal-token.test.ts",
