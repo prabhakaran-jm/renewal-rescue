@@ -59,7 +59,7 @@ Always-probed history ids (even if env seed list is trimmed): `I-J8R13K0F76X4` (
 ## API sketch
 
 - `GET /api/subscriptions` — seed ids + live PayPal refresh
-- `POST /api/proposals` — `{ subscriptionId?, demoWriteOff?, forceRevise? }`
+- `POST /api/proposals` — `{ subscriptionId?, demoWriteOff?, forceRevise?, forceCapture? }`
 - `POST /api/proposals/:id/approve` — passcode → capture / revise / settle
 - `POST /api/proposals/:id/deny`
 - `GET /api/recovered-mrr` — verified recoveries board

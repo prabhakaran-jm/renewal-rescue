@@ -64,13 +64,35 @@ describe("proposeDeterministic (rule paths)", () => {
     assert.equal(r.ai.source, "fallback");
   });
 
-  it("Gemini prompt omits preferredCaptureTarget", () => {
+  it("forceCapture → capture_outstanding with RULE · merchant override", () => {
+    const r = proposeDeterministic(makeSub(), { forceCapture: true });
+    assert.equal(r.proposal.action, "capture_outstanding");
+    assert.equal(r.proposal.impact?.value, "5.00");
+    assert.equal(r.ai.source, "rule");
+    assert.equal(r.ai.reason, "merchant override");
+    assert.equal(r.ai.model, "");
+    assert.match(r.customerMessage || "", /5\.00 USD/);
+    assert.equal((r.customerMessage || "").includes("5 USD"), false);
+  });
+
+  it("forceCapture formats integer outstanding as two decimals", () => {
+    const r = proposeDeterministic(
+      makeSub({ outstandingValue: 6, outstanding: money("6.00") }),
+      { forceCapture: true }
+    );
+    assert.match(r.customerMessage || "", /6\.00 USD/);
+    assert.match(r.proposal.rationale, /6\.00 USD/);
+    assert.equal((r.customerMessage || "").includes("6 USD"), false);
+  });
+
+  it("Gemini prompt omits preferredCaptureTarget and has no capture nudge", () => {
     const prompt = buildPrompt(
       makeSub({ preferredCaptureTarget: true, fixtureLabeled: false })
     );
     assert.equal(prompt.includes("Preferred capture target"), false);
     assert.equal(prompt.includes("preferredCaptureTarget"), false);
-    assert.match(prompt, /Outstanding:/);
+    assert.equal(prompt.includes("prefer capture_outstanding"), false);
+    assert.match(prompt, /Outstanding: 5\.00 USD/);
     assert.match(prompt, /Subscription status:/);
   });
 });
@@ -253,6 +275,94 @@ describe("proposeForSubscription with fake fetch", () => {
     assert.equal(r.proposal.proposedPrice?.value, "3.50");
   });
 
+  it("outstanding > 0 + Gemini retry_later survives (no silent coerce)", async () => {
+    const fakeFetch: typeof fetch = async () =>
+      new Response(
+        JSON.stringify(
+          geminiOkBody({
+            action: "retry_later",
+            rationale: "Wait for the next failed-renewal lifecycle signal.",
+            customerMessage:
+              "We will retry your renewal after the payment method is updated.",
+          })
+        ),
+        { status: 200 }
+      );
+
+    const r = await proposeForSubscription(makeSub(), {
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+      bypassCache: true,
+    });
+    assert.equal(r.proposal.action, "retry_later");
+    assert.equal(r.ai.source, "gemini");
+  });
+
+  it("outstanding > 0 + Gemini escalate survives (no silent coerce)", async () => {
+    const fakeFetch: typeof fetch = async () =>
+      new Response(
+        JSON.stringify(
+          geminiOkBody({
+            action: "escalate",
+            rationale: "Hand this account to a human collections specialist.",
+            customerMessage:
+              "A specialist will contact you about your past-due renewal.",
+          })
+        ),
+        { status: 200 }
+      );
+
+    const r = await proposeForSubscription(makeSub(), {
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+      bypassCache: true,
+    });
+    assert.equal(r.proposal.action, "escalate");
+    assert.equal(r.ai.source, "gemini");
+  });
+
+  it("forceCapture → capture + RULE; Deny/Revise unchanged", async () => {
+    let called = 0;
+    const fakeFetch: typeof fetch = async () => {
+      called += 1;
+      return new Response("{}", { status: 500 });
+    };
+
+    const capture = await proposeForSubscription(makeSub(), {
+      forceCapture: true,
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+      bypassCache: true,
+    });
+    assert.equal(capture.proposal.action, "capture_outstanding");
+    assert.equal(capture.proposal.impact?.value, "5.00");
+    assert.equal(capture.ai.source, "rule");
+    assert.equal(capture.ai.reason, "merchant override");
+    assert.match(capture.customerMessage || "", /5\.00 USD/);
+
+    const deny = await proposeForSubscription(makeSub(), {
+      demoWriteOff: true,
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+      bypassCache: true,
+    });
+    assert.equal(deny.proposal.action, "escalate");
+    assert.equal(deny.ai.source, "rule");
+    assert.equal(deny.ai.reason, "write-off test");
+    assert.equal(deny.policy.ok, false);
+
+    const revise = await proposeForSubscription(makeSub(), {
+      forceRevise: true,
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+      bypassCache: true,
+    });
+    assert.equal(revise.proposal.action, "revise_cheaper");
+    assert.equal(revise.proposal.proposedPrice?.value, "3.50");
+
+    assert.equal(called, 0);
+  });
+
   it("API key never appears in request URL", async () => {
     const urls: string[] = [];
     const secret = "super-secret-gemini-key-xyz";
@@ -281,7 +391,7 @@ describe("proposeForSubscription with fake fetch", () => {
     assert.equal(urls[0].includes(secret), false);
   });
 
-  it("demoWriteOff / forceRevise never call fetch", async () => {
+  it("demoWriteOff / forceRevise / forceCapture never call fetch", async () => {
     let called = 0;
     const fakeFetch: typeof fetch = async () => {
       called += 1;
@@ -295,6 +405,11 @@ describe("proposeForSubscription with fake fetch", () => {
     });
     await proposeForSubscription(makeSub(), {
       forceRevise: true,
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+    });
+    await proposeForSubscription(makeSub(), {
+      forceCapture: true,
       apiKey: "k",
       fetchImpl: fakeFetch,
     });
