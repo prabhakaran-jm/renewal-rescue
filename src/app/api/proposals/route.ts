@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * POST { subscriptionId?, demoWriteOff?, forceRevise? }
+ * POST { subscriptionId?, demoWriteOff?, forceRevise?, forceCapture? }
  * Returns HMAC-signed proposalId (Vercel-safe). Requires PROPOSAL_SIGNING_SECRET.
  */
 export async function POST(req: Request) {
@@ -16,6 +16,7 @@ export async function POST(req: Request) {
       subscriptionId?: string;
       demoWriteOff?: boolean;
       forceRevise?: boolean;
+      forceCapture?: boolean;
     };
 
     const subscriptionId =
@@ -32,6 +33,7 @@ export async function POST(req: Request) {
       await proposeForSubscription(sub, {
         demoWriteOff: Boolean(body.demoWriteOff),
         forceRevise: Boolean(body.forceRevise),
+        forceCapture: Boolean(body.forceCapture),
       });
     const stored = saveProposal(proposal, policy);
 
