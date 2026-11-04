@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  captureNowHint,
+  noMoneyApproveMessage,
+  shouldShowCaptureNow,
+} from "@/lib/desk/approve-copy";
+import {
   coerceRecoveredBoardRow,
   mergeRecoveredBoard,
   serverHasRecovery,
@@ -486,11 +491,24 @@ export function RecoveryDesk() {
   const isPend =
     approveResult?.deskStatus === "CAPTURE_PEND" || approveResult?.pending;
   const isRecovered = approveResult?.deskStatus === "RECOVERED";
+  const isNoMoney = approveResult?.deskStatus === "NO_MONEY";
   const selectedSub = subs.find((s) => s.id === selectedId);
-  const showCaptureNow =
-    Boolean(selectedSub && selectedSub.outstandingValue > 0) &&
-    Boolean(proposal) &&
-    proposal!.proposal.action !== "capture_outstanding";
+  const showCaptureNow = shouldShowCaptureNow({
+    outstandingValue: selectedSub?.outstandingValue ?? 0,
+    proposalAction: proposal?.proposal.action,
+  });
+  const captureHint =
+    showCaptureNow && proposal
+      ? captureNowHint({
+          action: proposal.proposal.action,
+          aiSource: proposal.ai?.source,
+          outstandingValue: selectedSub?.outstandingValue ?? 0,
+          currencyCode:
+            selectedSub?.outstanding?.currency_code ||
+            proposal.proposal.impact?.currency_code ||
+            "USD",
+        })
+      : null;
 
   const visibleSubs = showFixtures
     ? subs
@@ -523,16 +541,6 @@ export function RecoveryDesk() {
         >
           Propose
         </button>
-        {showCaptureNow ? (
-          <button
-            type="button"
-            className="primary"
-            onClick={() => void propose({ forceCapture: true })}
-            disabled={!selectedId}
-          >
-            Capture now
-          </button>
-        ) : null}
         <button
           type="button"
           className="ghost"
@@ -695,6 +703,18 @@ export function RecoveryDesk() {
               </strong>
             </span>
           </div>
+          {showCaptureNow && captureHint ? (
+            <div className="capture-override">
+              <p className="hint">{captureHint}</p>
+              <button
+                type="button"
+                onClick={() => void propose({ forceCapture: true })}
+                disabled={!selectedId}
+              >
+                Capture now
+              </button>
+            </div>
+          ) : null}
           <p className="rationale">{proposal.proposal.rationale}</p>
 
           <label className="passcode-field">
@@ -755,6 +775,19 @@ export function RecoveryDesk() {
                 Outstanding cleared
                 {approveResult.activate ? "; subscription activate attempted" : ""}
                 .
+              </span>
+            </div>
+          ) : null}
+          {isNoMoney && !isPend && !isRecovered ? (
+            <div className="result-banner neutral" role="status">
+              <strong>Approved</strong>
+              <span>
+                {approveResult.message ||
+                  noMoneyApproveMessage(
+                    proposal?.proposal.action === "escalate"
+                      ? "escalate"
+                      : "retry_later"
+                  )}
               </span>
             </div>
           ) : null}

@@ -10,6 +10,10 @@ import {
 import { getProposal, updateProposal } from "@/lib/desk/proposals";
 import { appendVerifiedRecovery } from "@/lib/desk/recovered-mrr";
 import { getDeskSubscription } from "@/lib/desk/seed";
+import {
+  isNoMoneyApproveAction,
+  noMoneyApproveMessage,
+} from "@/lib/desk/approve-copy";
 import { activateAfterCaptureAction } from "@/lib/recovery/activate";
 import { captureOutstandingAction } from "@/lib/recovery/capture";
 import { reviseCheaperAction } from "@/lib/recovery/revise";
@@ -227,7 +231,8 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
-    if (action === "retry_later" || action === "escalate") {
+    if (isNoMoneyApproveAction(action)) {
+      const message = noMoneyApproveMessage(action);
       const next = updateProposal(token, {
         status: "APPROVED",
         result: {
@@ -238,6 +243,8 @@ export async function POST(req: Request, ctx: Ctx) {
       });
       return NextResponse.json({
         ok: true,
+        deskStatus: "NO_MONEY",
+        message,
         proposalId: next?.token,
         proposal: next,
       });
