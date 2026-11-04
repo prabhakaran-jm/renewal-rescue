@@ -1,23 +1,24 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  captureNowHint,
   isNoMoneyApproveAction,
   noMoneyApproveMessage,
   shouldShowCaptureNow,
 } from "../src/lib/desk/approve-copy";
 
 describe("approve-copy", () => {
-  it("noMoneyApproveMessage — retry_later", () => {
+  it("noMoneyApproveMessage — retry_later (no false schedule claim)", () => {
     assert.equal(
       noMoneyApproveMessage("retry_later"),
-      "Approved: no money moved — retry scheduled by merchant"
+      "Approved: no money moved — marked retry later (no PayPal call)"
     );
   });
 
-  it("noMoneyApproveMessage — escalate", () => {
+  it("noMoneyApproveMessage — escalate (no false schedule claim)", () => {
     assert.equal(
       noMoneyApproveMessage("escalate"),
-      "Approved: no money moved — escalated by merchant"
+      "Approved: no money moved — flagged for escalation (no PayPal call)"
     );
   });
 
@@ -74,6 +75,74 @@ describe("approve-copy", () => {
         proposalAction: null,
       }),
       false
+    );
+  });
+
+  it("captureNowHint — Gemini retry_later / escalate / revise_cheaper", () => {
+    assert.equal(
+      captureNowHint({
+        action: "retry_later",
+        aiSource: "gemini",
+        outstandingValue: 6,
+        currencyCode: "USD",
+      }),
+      "Gemini recommends retry_later. Merchant can override and capture the 6.00 USD outstanding now."
+    );
+    assert.equal(
+      captureNowHint({
+        action: "escalate",
+        aiSource: "gemini",
+        outstandingValue: 5,
+        currencyCode: "USD",
+      }),
+      "Gemini recommends escalate. Merchant can override and capture the 5.00 USD outstanding now."
+    );
+    assert.equal(
+      captureNowHint({
+        action: "revise_cheaper",
+        aiSource: "gemini",
+        outstandingValue: 5,
+        currencyCode: "USD",
+      }),
+      "Gemini recommends revise_cheaper. Merchant can override and capture the 5.00 USD outstanding now."
+    );
+  });
+
+  it("captureNowHint — RULE (Revise / Deny paths) and fallback", () => {
+    assert.equal(
+      captureNowHint({
+        action: "revise_cheaper",
+        aiSource: "rule",
+        outstandingValue: 5,
+        currencyCode: "USD",
+      }),
+      "RULE recommends revise_cheaper. Merchant can override and capture the 5.00 USD outstanding now."
+    );
+    assert.equal(
+      captureNowHint({
+        action: "escalate",
+        aiSource: "rule",
+        outstandingValue: 5,
+        currencyCode: "USD",
+      }),
+      "RULE recommends escalate. Merchant can override and capture the 5.00 USD outstanding now."
+    );
+    assert.equal(
+      captureNowHint({
+        action: "retry_later",
+        aiSource: "fallback",
+        outstandingValue: 5.5,
+        currencyCode: "USD",
+      }),
+      "Fallback recommends retry_later. Merchant can override and capture the 5.50 USD outstanding now."
+    );
+    assert.equal(
+      captureNowHint({
+        action: "revise_cheaper",
+        aiSource: "fallback",
+        outstandingValue: 5,
+      }),
+      "Fallback recommends revise_cheaper. Merchant can override and capture the 5.00 USD outstanding now."
     );
   });
 });

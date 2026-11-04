@@ -1,9 +1,11 @@
 /**
- * Desk copy for Approve results that do not move money.
- * Visible in the Approve / Deny result panel — not an error path.
+ * Desk copy for Approve results that do not move money,
+ * and Capture now override hint (action + AI provenance aware).
  */
 
 export type NoMoneyApproveAction = "retry_later" | "escalate";
+
+export type AiSourceLabel = "gemini" | "fallback" | "rule" | string;
 
 export function isNoMoneyApproveAction(
   action: string
@@ -14,14 +16,14 @@ export function isNoMoneyApproveAction(
 /** Neutral success copy when merchant Approves retry_later / escalate. */
 export function noMoneyApproveMessage(action: NoMoneyApproveAction): string {
   if (action === "retry_later") {
-    return "Approved: no money moved — retry scheduled by merchant";
+    return "Approved: no money moved — marked retry later (no PayPal call)";
   }
-  return "Approved: no money moved — escalated by merchant";
+  return "Approved: no money moved — flagged for escalation (no PayPal call)";
 }
 
 /**
- * Show Capture now override when Gemini (or any propose) did not pick capture
- * and live outstanding remains — film: AI suggests waiting, merchant overrides.
+ * Show Capture now override when propose did not pick capture
+ * and live outstanding remains.
  */
 export function shouldShowCaptureNow(opts: {
   outstandingValue: number;
@@ -30,4 +32,26 @@ export function shouldShowCaptureNow(opts: {
   if (!(opts.outstandingValue > 0)) return false;
   if (!opts.proposalAction) return false;
   return opts.proposalAction !== "capture_outstanding";
+}
+
+function sourcePhrase(source: AiSourceLabel | undefined): string {
+  if (source === "gemini") return "Gemini";
+  if (source === "rule") return "RULE";
+  return "Fallback";
+}
+
+/**
+ * Hint next to Capture now — reflects current action + ai.source.
+ * e.g. "Gemini recommends retry_later. Merchant can override and capture the 6.00 USD outstanding now."
+ */
+export function captureNowHint(opts: {
+  action: string;
+  aiSource?: AiSourceLabel | null;
+  outstandingValue: number;
+  currencyCode?: string | null;
+}): string {
+  const currency = (opts.currencyCode || "USD").trim() || "USD";
+  const amount = `${opts.outstandingValue.toFixed(2)} ${currency}`;
+  const who = sourcePhrase(opts.aiSource || "fallback");
+  return `${who} recommends ${opts.action}. Merchant can override and capture the ${amount} outstanding now.`;
 }

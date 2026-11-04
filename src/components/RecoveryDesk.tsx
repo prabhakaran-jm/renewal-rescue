@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  captureNowHint,
   noMoneyApproveMessage,
   shouldShowCaptureNow,
 } from "@/lib/desk/approve-copy";
@@ -490,16 +491,24 @@ export function RecoveryDesk() {
   const isPend =
     approveResult?.deskStatus === "CAPTURE_PEND" || approveResult?.pending;
   const isRecovered = approveResult?.deskStatus === "RECOVERED";
-  const isNoMoney =
-    approveResult?.deskStatus === "NO_MONEY" ||
-    (approveResult?.ok === true &&
-      typeof approveResult.message === "string" &&
-      approveResult.message.startsWith("Approved: no money moved"));
+  const isNoMoney = approveResult?.deskStatus === "NO_MONEY";
   const selectedSub = subs.find((s) => s.id === selectedId);
   const showCaptureNow = shouldShowCaptureNow({
     outstandingValue: selectedSub?.outstandingValue ?? 0,
     proposalAction: proposal?.proposal.action,
   });
+  const captureHint =
+    showCaptureNow && proposal
+      ? captureNowHint({
+          action: proposal.proposal.action,
+          aiSource: proposal.ai?.source,
+          outstandingValue: selectedSub?.outstandingValue ?? 0,
+          currencyCode:
+            selectedSub?.outstanding?.currency_code ||
+            proposal.proposal.impact?.currency_code ||
+            "USD",
+        })
+      : null;
 
   const visibleSubs = showFixtures
     ? subs
@@ -694,12 +703,9 @@ export function RecoveryDesk() {
               </strong>
             </span>
           </div>
-          {showCaptureNow ? (
+          {showCaptureNow && captureHint ? (
             <div className="capture-override">
-              <p className="hint">
-                AI suggests waiting — merchant can override and capture
-                outstanding now.
-              </p>
+              <p className="hint">{captureHint}</p>
               <button
                 type="button"
                 onClick={() => void propose({ forceCapture: true })}
