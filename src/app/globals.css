@@ -348,6 +348,31 @@ button:disabled {
   background: color-mix(in srgb, var(--accent-soft) 70%, white);
 }
 
+.result-banner.neutral {
+  color: var(--ink);
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--bg-elevated) 70%, white);
+}
+
+.capture-override {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--muted) 35%, var(--line));
+  background: color-mix(in srgb, var(--bg) 55%, white);
+}
+
+.capture-override .hint {
+  margin: 0;
+  flex: 1 1 14rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .proposal-panel {
   margin-top: 1.5rem;
   padding: 1.15rem 1.2rem 1.25rem;

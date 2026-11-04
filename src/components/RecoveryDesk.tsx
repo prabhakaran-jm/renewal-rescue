@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  noMoneyApproveMessage,
+  shouldShowCaptureNow,
+} from "@/lib/desk/approve-copy";
+import {
   coerceRecoveredBoardRow,
   mergeRecoveredBoard,
   serverHasRecovery,
@@ -486,11 +490,16 @@ export function RecoveryDesk() {
   const isPend =
     approveResult?.deskStatus === "CAPTURE_PEND" || approveResult?.pending;
   const isRecovered = approveResult?.deskStatus === "RECOVERED";
+  const isNoMoney =
+    approveResult?.deskStatus === "NO_MONEY" ||
+    (approveResult?.ok === true &&
+      typeof approveResult.message === "string" &&
+      approveResult.message.startsWith("Approved: no money moved"));
   const selectedSub = subs.find((s) => s.id === selectedId);
-  const showCaptureNow =
-    Boolean(selectedSub && selectedSub.outstandingValue > 0) &&
-    Boolean(proposal) &&
-    proposal!.proposal.action !== "capture_outstanding";
+  const showCaptureNow = shouldShowCaptureNow({
+    outstandingValue: selectedSub?.outstandingValue ?? 0,
+    proposalAction: proposal?.proposal.action,
+  });
 
   const visibleSubs = showFixtures
     ? subs
@@ -523,16 +532,6 @@ export function RecoveryDesk() {
         >
           Propose
         </button>
-        {showCaptureNow ? (
-          <button
-            type="button"
-            className="primary"
-            onClick={() => void propose({ forceCapture: true })}
-            disabled={!selectedId}
-          >
-            Capture now
-          </button>
-        ) : null}
         <button
           type="button"
           className="ghost"
@@ -695,6 +694,21 @@ export function RecoveryDesk() {
               </strong>
             </span>
           </div>
+          {showCaptureNow ? (
+            <div className="capture-override">
+              <p className="hint">
+                AI suggests waiting — merchant can override and capture
+                outstanding now.
+              </p>
+              <button
+                type="button"
+                onClick={() => void propose({ forceCapture: true })}
+                disabled={!selectedId}
+              >
+                Capture now
+              </button>
+            </div>
+          ) : null}
           <p className="rationale">{proposal.proposal.rationale}</p>
 
           <label className="passcode-field">
@@ -755,6 +769,19 @@ export function RecoveryDesk() {
                 Outstanding cleared
                 {approveResult.activate ? "; subscription activate attempted" : ""}
                 .
+              </span>
+            </div>
+          ) : null}
+          {isNoMoney && !isPend && !isRecovered ? (
+            <div className="result-banner neutral" role="status">
+              <strong>Approved</strong>
+              <span>
+                {approveResult.message ||
+                  noMoneyApproveMessage(
+                    proposal?.proposal.action === "escalate"
+                      ? "escalate"
+                      : "retry_later"
+                  )}
               </span>
             </div>
           ) : null}
