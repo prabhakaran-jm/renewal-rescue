@@ -12,11 +12,18 @@ function money(value: number, currency = "USD") {
   return { currency_code: currency, value: value.toFixed(2) };
 }
 
+/** Human-facing amount in messages / rationales (always two decimals). */
+function moneyDisplay(value: number, currency = "USD") {
+  return `${value.toFixed(2)} ${currency}`;
+}
+
 export type ProposeOpts = {
   /** Demo deny beat: attempt banned write-off — always rule-based */
   demoWriteOff?: boolean;
   /** Force revise retention path — always rule-based */
   forceRevise?: boolean;
+  /** Merchant override: force capture_outstanding — always rule-based */
+  forceCapture?: boolean;
   revisePlanId?: string;
   /** Injectable fetch for tests */
   fetchImpl?: typeof fetch;
@@ -101,7 +108,7 @@ function resolveApiKey(explicit?: string | null): string | null {
 }
 
 /**
- * Deterministic propose (rule-based). Used for Demo Deny / Propose revise,
+ * Deterministic propose (rule-based). Used for Demo Deny / Revise / Capture now,
  * and as fallback when Gemini fails validation/policy/timeout/HTTP.
  */
 export function proposeDeterministic(
@@ -110,6 +117,7 @@ export function proposeDeterministic(
 ): ProposeResult {
   const outstanding = sub.outstandingValue;
   const currency = sub.outstanding?.currency_code || "USD";
+  const outstandingLabel = moneyDisplay(outstanding, currency);
   const ctx = {
     outstanding: sub.outstanding,
     currentPlanPrice: sub.currentPlanPrice,
@@ -139,6 +147,26 @@ export function proposeDeterministic(
     };
   }
 
+  if (opts.forceCapture) {
+    const amount = outstanding > 0 ? outstanding : 0;
+    const raw: RenewalProposal = {
+      subscriptionId: sub.id,
+      action: "capture_outstanding",
+      rationale: `Merchant override: capture live outstanding ${moneyDisplay(amount, currency)} (${sub.status}). Capture OUTSTANDING_BALANCE only after merchant Approve — never auto-capture.`,
+      impact: money(amount, currency),
+      fixtureLabeled: !(outstanding > 0),
+    };
+    const proposal = RenewalProposalSchema.parse(raw) as RenewalProposal;
+    const policy = enforcePolicy(proposal, ctx);
+    return {
+      proposal,
+      policy,
+      // Desk badge: RULE · merchant override
+      ai: { source: "rule", model: "", reason: "merchant override" },
+      customerMessage: `Hi — we noticed a failed renewal. Please settle the outstanding ${moneyDisplay(amount, currency)} balance when you can.`,
+    };
+  }
+
   let raw: RenewalProposal;
 
   if (outstanding > 0 && !opts.forceRevise) {
@@ -146,8 +174,8 @@ export function proposeDeterministic(
       subscriptionId: sub.id,
       action: "capture_outstanding",
       rationale: sub.preferredCaptureTarget
-        ? `Preferred live capture target ${sub.id}: outstanding ${outstanding} ${currency} (${sub.status}). Capture OUTSTANDING_BALANCE only after merchant Approve - never auto-capture.`
-        : `Live outstanding ${outstanding} ${currency}. Propose capture <= outstanding; merchant must Approve before money moves.`,
+        ? `Preferred live capture target ${sub.id}: outstanding ${outstandingLabel} (${sub.status}). Capture OUTSTANDING_BALANCE only after merchant Approve - never auto-capture.`
+        : `Live outstanding ${outstandingLabel}. Propose capture <= outstanding; merchant must Approve before money moves.`,
       impact: money(outstanding, currency),
       fixtureLabeled: false,
     };
@@ -241,28 +269,20 @@ function buildFromModelAction(
 export function buildPrompt(sub: DeskSubscription): string {
   const outstanding = sub.outstandingValue;
   const currency = sub.outstanding?.currency_code || "USD";
-  const lines = [
+  return [
     "You are proposing a recovery action for a failed PayPal subscription renewal.",
     "Choose exactly one action: capture_outstanding | revise_cheaper | retry_later | escalate.",
     "Also provide a short rationale (merchant-facing) and a short customer draft message.",
     "Do NOT invent IDs or dollar amounts — the application sets those.",
     "Never suggest write-offs or forgiving the balance.",
-  ];
-  if (outstanding > 0) {
-    lines.push(
-      "When outstanding is greater than zero, prefer capture_outstanding (merchant Approve required before money moves)."
-    );
-  }
-  lines.push(
     "",
     `Subscription status: ${sub.status}`,
-    `Outstanding: ${outstanding} ${currency}`,
+    `Outstanding: ${moneyDisplay(outstanding, currency)}`,
     `Failed payments count: ${sub.failedPaymentsCount ?? "unknown"}`,
     `Fixture labeled ($0): ${sub.fixtureLabeled ? "yes" : "no"}`,
     "",
-    "Return JSON only matching the schema."
-  );
-  return lines.join("\n");
+    "Return JSON only matching the schema.",
+  ].join("\n");
 }
 
 async function proposeViaGemini(
@@ -400,51 +420,16 @@ async function proposeViaGemini(
 }
 
 /**
- * Live outstanding default Propose must be capture_outstanding so Approve
- * can call money APIs. Revise (forceRevise) and Deny demo stay separate.
- * Badge must not claim Gemini chose capture when we coerced.
- */
-function coerceLiveOutstandingCapture(
-  sub: DeskSubscription,
-  opts: ProposeOpts,
-  result: ProposeResult
-): ProposeResult {
-  if (
-    opts.demoWriteOff ||
-    opts.forceRevise ||
-    !(sub.outstandingValue > 0) ||
-    result.proposal.action === "capture_outstanding"
-  ) {
-    return result;
-  }
-
-  const priorAction = result.proposal.action;
-  const fb = proposeDeterministic(sub, opts);
-  const currency = sub.outstanding?.currency_code || "USD";
-
-  return {
-    ...fb,
-    ai: {
-      source: "fallback",
-      model: resolveModel(opts.model),
-      reason: `coerced_from_${priorAction}`,
-    },
-    // Light capture draft — do not reuse retry_later / escalate copy on a capture badge
-    customerMessage: `Hi — we noticed a failed renewal. Please settle the outstanding ${sub.outstandingValue} ${currency} balance when you can.`,
-  };
-}
-
-/**
  * Async propose: Gemini first (when key present), else deterministic.
- * Demo Deny / forceRevise stay rule-based. 5-minute cache on (id, outstanding).
- * Outstanding > 0 default Propose is always capture_outstanding (post-coerce).
+ * Demo Deny / forceRevise / forceCapture stay rule-based.
+ * 5-minute cache on (id, outstanding). Gemini's chosen action is kept as-is.
  */
 export async function proposeForSubscription(
   sub: DeskSubscription,
   opts: ProposeOpts = {}
 ): Promise<ProposeResult> {
   // Film-consistent rule paths — never call Gemini
-  if (opts.demoWriteOff || opts.forceRevise) {
+  if (opts.demoWriteOff || opts.forceRevise || opts.forceCapture) {
     return proposeDeterministic(sub, opts);
   }
 
@@ -458,7 +443,7 @@ export async function proposeForSubscription(
     }
   }
 
-  const rawResult =
+  const result =
     opts.skipAi || !resolveApiKey(opts.apiKey)
       ? (() => {
           const fb = proposeDeterministic(sub, opts);
@@ -475,8 +460,6 @@ export async function proposeForSubscription(
           return { ...fb, ai: { ...fb.ai, reason: "skip_ai" } };
         })()
       : await proposeViaGemini(sub, opts);
-
-  const result = coerceLiveOutstandingCapture(sub, opts, rawResult);
 
   if (!opts.bypassCache) {
     proposeCache.set(key, {

@@ -304,6 +304,7 @@ export function RecoveryDesk() {
   async function propose(opts?: {
     demoWriteOff?: boolean;
     forceRevise?: boolean;
+    forceCapture?: boolean;
   }) {
     setError(null);
     setApproveResult(null);
@@ -485,6 +486,11 @@ export function RecoveryDesk() {
   const isPend =
     approveResult?.deskStatus === "CAPTURE_PEND" || approveResult?.pending;
   const isRecovered = approveResult?.deskStatus === "RECOVERED";
+  const selectedSub = subs.find((s) => s.id === selectedId);
+  const showCaptureNow =
+    Boolean(selectedSub && selectedSub.outstandingValue > 0) &&
+    Boolean(proposal) &&
+    proposal!.proposal.action !== "capture_outstanding";
 
   const visibleSubs = showFixtures
     ? subs
@@ -517,6 +523,16 @@ export function RecoveryDesk() {
         >
           Propose
         </button>
+        {showCaptureNow ? (
+          <button
+            type="button"
+            className="primary"
+            onClick={() => void propose({ forceCapture: true })}
+            disabled={!selectedId}
+          >
+            Capture now
+          </button>
+        ) : null}
         <button
           type="button"
           className="ghost"
