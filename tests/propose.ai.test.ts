@@ -72,6 +72,7 @@ describe("proposeDeterministic (rule paths)", () => {
     assert.equal(prompt.includes("preferredCaptureTarget"), false);
     assert.match(prompt, /Outstanding:/);
     assert.match(prompt, /Subscription status:/);
+    assert.match(prompt, /prefer capture_outstanding/);
   });
 });
 
@@ -229,14 +230,14 @@ describe("proposeForSubscription with fake fetch", () => {
       new Response(
         JSON.stringify(
           geminiOkBody({
-            action: "revise_cheaper",
+            action: "capture_outstanding",
             rationale:
-              "Offer a retention discount on the next billing cycle only.",
+              "Capture the live outstanding after merchant Approve only.",
             customerMessage:
-              "We can switch you to a lower plan if you approve the change.",
+              "Hi — please settle the failed renewal outstanding balance.",
             subscriptionId: "I-FAKE",
             proposedPrice: { currency_code: "USD", value: "1.00" },
-            impact: { currency_code: "USD", value: "1.00" },
+            impact: { currency_code: "USD", value: "99.99" },
           })
         ),
         { status: 200 }
@@ -249,8 +250,103 @@ describe("proposeForSubscription with fake fetch", () => {
     });
     assert.equal(r.ai.source, "gemini");
     assert.equal(r.proposal.subscriptionId, "I-3HK9STH33F7F");
-    assert.equal(r.proposal.action, "revise_cheaper");
-    assert.equal(r.proposal.proposedPrice?.value, "3.50");
+    assert.equal(r.proposal.action, "capture_outstanding");
+    assert.equal(r.proposal.impact?.value, "5.00");
+  });
+
+  it("outstanding > 0 + Gemini retry_later → coerce capture_outstanding (fallback badge)", async () => {
+    const fakeFetch: typeof fetch = async () =>
+      new Response(
+        JSON.stringify(
+          geminiOkBody({
+            action: "retry_later",
+            rationale: "Wait for the next failed-renewal lifecycle signal.",
+            customerMessage:
+              "We will retry your renewal after the payment method is updated.",
+          })
+        ),
+        { status: 200 }
+      );
+
+    const r = await proposeForSubscription(makeSub(), {
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+      bypassCache: true,
+    });
+    assert.equal(r.proposal.action, "capture_outstanding");
+    assert.equal(r.proposal.impact?.value, "5.00");
+    assert.equal(r.ai.source, "fallback");
+    assert.equal(r.ai.reason, "coerced_from_retry_later");
+    assert.match(r.customerMessage || "", /outstanding/i);
+  });
+
+  it("outstanding > 0 + Gemini escalate → coerce capture_outstanding", async () => {
+    const fakeFetch: typeof fetch = async () =>
+      new Response(
+        JSON.stringify(
+          geminiOkBody({
+            action: "escalate",
+            rationale: "Hand this account to a human collections specialist.",
+            customerMessage:
+              "A specialist will contact you about your past-due renewal.",
+          })
+        ),
+        { status: 200 }
+      );
+
+    const r = await proposeForSubscription(makeSub(), {
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+      bypassCache: true,
+    });
+    assert.equal(r.proposal.action, "capture_outstanding");
+    assert.equal(r.ai.source, "fallback");
+    assert.equal(r.ai.reason, "coerced_from_escalate");
+  });
+
+  it("outstanding > 0 Propose never stays revise_cheaper from Gemini", async () => {
+    const fakeFetch: typeof fetch = async () =>
+      new Response(
+        JSON.stringify(
+          geminiOkBody({
+            action: "revise_cheaper",
+            rationale:
+              "Offer a retention discount on the next billing cycle only.",
+            customerMessage:
+              "We can switch you to a lower plan if you approve the change.",
+          })
+        ),
+        { status: 200 }
+      );
+
+    const r = await proposeForSubscription(makeSub(), {
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+      bypassCache: true,
+    });
+    assert.equal(r.proposal.action, "capture_outstanding");
+    assert.equal(r.ai.source, "fallback");
+    assert.equal(r.ai.reason, "coerced_from_revise_cheaper");
+  });
+
+  it("Deny demoWriteOff still blocked write-off; Revise still revise_cheaper", async () => {
+    const deny = await proposeForSubscription(makeSub(), {
+      demoWriteOff: true,
+      apiKey: "k",
+      bypassCache: true,
+    });
+    assert.equal(deny.proposal.action, "escalate");
+    assert.equal(deny.ai.source, "rule");
+    assert.equal(deny.ai.reason, "write-off test");
+    assert.equal(deny.policy.ok, false);
+
+    const revise = await proposeForSubscription(makeSub(), {
+      forceRevise: true,
+      apiKey: "k",
+      bypassCache: true,
+    });
+    assert.equal(revise.proposal.action, "revise_cheaper");
+    assert.equal(revise.proposal.proposedPrice?.value, "3.50");
   });
 
   it("API key never appears in request URL", async () => {

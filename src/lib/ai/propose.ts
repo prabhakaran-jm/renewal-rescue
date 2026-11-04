@@ -241,20 +241,28 @@ function buildFromModelAction(
 export function buildPrompt(sub: DeskSubscription): string {
   const outstanding = sub.outstandingValue;
   const currency = sub.outstanding?.currency_code || "USD";
-  return [
+  const lines = [
     "You are proposing a recovery action for a failed PayPal subscription renewal.",
     "Choose exactly one action: capture_outstanding | revise_cheaper | retry_later | escalate.",
     "Also provide a short rationale (merchant-facing) and a short customer draft message.",
     "Do NOT invent IDs or dollar amounts — the application sets those.",
     "Never suggest write-offs or forgiving the balance.",
+  ];
+  if (outstanding > 0) {
+    lines.push(
+      "When outstanding is greater than zero, prefer capture_outstanding (merchant Approve required before money moves)."
+    );
+  }
+  lines.push(
     "",
     `Subscription status: ${sub.status}`,
     `Outstanding: ${outstanding} ${currency}`,
     `Failed payments count: ${sub.failedPaymentsCount ?? "unknown"}`,
     `Fixture labeled ($0): ${sub.fixtureLabeled ? "yes" : "no"}`,
     "",
-    "Return JSON only matching the schema.",
-  ].join("\n");
+    "Return JSON only matching the schema."
+  );
+  return lines.join("\n");
 }
 
 async function proposeViaGemini(
@@ -392,8 +400,44 @@ async function proposeViaGemini(
 }
 
 /**
+ * Live outstanding default Propose must be capture_outstanding so Approve
+ * can call money APIs. Revise (forceRevise) and Deny demo stay separate.
+ * Badge must not claim Gemini chose capture when we coerced.
+ */
+function coerceLiveOutstandingCapture(
+  sub: DeskSubscription,
+  opts: ProposeOpts,
+  result: ProposeResult
+): ProposeResult {
+  if (
+    opts.demoWriteOff ||
+    opts.forceRevise ||
+    !(sub.outstandingValue > 0) ||
+    result.proposal.action === "capture_outstanding"
+  ) {
+    return result;
+  }
+
+  const priorAction = result.proposal.action;
+  const fb = proposeDeterministic(sub, opts);
+  const currency = sub.outstanding?.currency_code || "USD";
+
+  return {
+    ...fb,
+    ai: {
+      source: "fallback",
+      model: resolveModel(opts.model),
+      reason: `coerced_from_${priorAction}`,
+    },
+    // Light capture draft — do not reuse retry_later / escalate copy on a capture badge
+    customerMessage: `Hi — we noticed a failed renewal. Please settle the outstanding ${sub.outstandingValue} ${currency} balance when you can.`,
+  };
+}
+
+/**
  * Async propose: Gemini first (when key present), else deterministic.
  * Demo Deny / forceRevise stay rule-based. 5-minute cache on (id, outstanding).
+ * Outstanding > 0 default Propose is always capture_outstanding (post-coerce).
  */
 export async function proposeForSubscription(
   sub: DeskSubscription,
@@ -414,7 +458,7 @@ export async function proposeForSubscription(
     }
   }
 
-  const result =
+  const rawResult =
     opts.skipAi || !resolveApiKey(opts.apiKey)
       ? (() => {
           const fb = proposeDeterministic(sub, opts);
@@ -431,6 +475,8 @@ export async function proposeForSubscription(
           return { ...fb, ai: { ...fb.ai, reason: "skip_ai" } };
         })()
       : await proposeViaGemini(sub, opts);
+
+  const result = coerceLiveOutstandingCapture(sub, opts, rawResult);
 
   if (!opts.bypassCache) {
     proposeCache.set(key, {
