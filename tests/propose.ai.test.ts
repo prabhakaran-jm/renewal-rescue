@@ -301,7 +301,7 @@ describe("proposeForSubscription with fake fetch", () => {
     assert.equal(r.ai.source, "gemini");
   });
 
-  it("SUSPENDED + Gemini retry_later keeps action, RULE warning, hides draft", async () => {
+  it("SUSPENDED + Gemini retry_later keeps gemini provenance, RULE warning separate", async () => {
     const fakeFetch: typeof fetch = async () =>
       new Response(
         JSON.stringify(
@@ -321,11 +321,33 @@ describe("proposeForSubscription with fake fetch", () => {
       bypassCache: true,
     });
     assert.equal(r.proposal.action, "retry_later");
-    assert.equal(r.ai.source, "rule");
-    assert.equal(r.ai.reason, SUSPENDED_RETRY_LATER_WARNING);
+    // Gemini provenance retained — ruleWarning is a separate UI block.
+    assert.equal(r.ai.source, "gemini");
     assert.equal(r.hideCustomerDraft, true);
     assert.equal(r.customerMessage, undefined);
     assert.equal(r.ruleWarning, SUSPENDED_RETRY_LATER_WARNING);
+  });
+
+  it("applySuspendedRetryLaterHonesty keeps gemini source + separate ruleWarning", () => {
+    const base = {
+      proposal: {
+        subscriptionId: "I-X",
+        action: "retry_later" as const,
+        rationale: "Wait for the next failed-renewal lifecycle signal.",
+        impact: money("5.00"),
+      },
+      policy: { ok: true as const },
+      ai: { source: "gemini" as const, model: "m", reason: "model_said_so" },
+      customerMessage: "We will retry your renewal shortly.",
+    };
+    const out = applySuspendedRetryLaterHonesty(base, "SUSPENDED");
+    assert.equal(out.ai.source, "gemini");
+    assert.equal(out.ai.model, "m");
+    assert.equal(out.ai.reason, "model_said_so");
+    assert.equal(out.proposal.action, "retry_later");
+    assert.equal(out.hideCustomerDraft, true);
+    assert.equal(out.customerMessage, undefined);
+    assert.equal(out.ruleWarning, SUSPENDED_RETRY_LATER_WARNING);
   });
 
   it("applySuspendedRetryLaterHonesty does not coerce non-retry actions", () => {

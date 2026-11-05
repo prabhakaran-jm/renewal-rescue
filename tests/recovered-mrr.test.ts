@@ -1,8 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  AUDITED_VERIFIED_RECOVERY_TXN_IDS,
+  appendVerifiedRecovery,
+  clearRecoveredSessionForTests,
+  firstQualifyingCompletedTxn,
   firstVerifiedRecoveryTxn,
+  isAuditedVerifiedRecoveryTxnId,
   isRecoveredTransaction,
+  isVerifiedBalanceRecoveryTxn,
   isVerifiedRecoveryRow,
   sumRecoveredUsd,
   type RecoveredMrrRow,
@@ -30,7 +36,7 @@ function txn(
 }
 
 describe("recovered txn rule (probe-informed)", () => {
-  it("counts COMPLETED $5 capture", () => {
+  it("counts COMPLETED $5 capture as qualifying", () => {
     assert.equal(
       isRecoveredTransaction({
         id: "7RG29592AA729850V",
@@ -85,9 +91,112 @@ describe("recovered txn rule (probe-informed)", () => {
   });
 });
 
-describe("first-$5 verified recovery attribution", () => {
-  it("picks the earliest COMPLETED ≥ $5 (undercounts later doubles)", () => {
+describe("audited allowlist + correlation attribution (P0 honesty)", () => {
+  it("documents the known $16-board historical txn ids", () => {
+    // Money-proof $5 + film $5; smoke $6 id not in repo fixtures.
+    assert.equal(isAuditedVerifiedRecoveryTxnId("7RG29592AA729850V"), true);
+    assert.equal(isAuditedVerifiedRecoveryTxnId("57J03146YN2648933"), true);
+    assert.ok(AUDITED_VERIFIED_RECOVERY_TXN_IDS.has("7RG29592AA729850V"));
+    assert.ok(AUDITED_VERIFIED_RECOVERY_TXN_IDS.has("57J03146YN2648933"));
+    assert.equal(isAuditedVerifiedRecoveryTxnId("4D9358391Y4514409"), false);
+  });
+
+  it("generic first-$5 COMPLETED is NOT verified without allowlist/correlation", () => {
+    const generic = txn({
+      id: "RANDOM_FIRST_5",
+      value: "5.00",
+      time: "2026-10-31T12:00:00.000Z",
+    });
+    assert.equal(isRecoveredTransaction(generic), true);
+    assert.equal(isVerifiedBalanceRecoveryTxn(generic), false);
+    assert.equal(firstVerifiedRecoveryTxn([generic]), null);
+    assert.equal(firstQualifyingCompletedTxn([generic])?.id, "RANDOM_FIRST_5");
+  });
+
+  it("audited historical txn is verified recovery", () => {
+    const audited = txn({
+      id: "7RG29592AA729850V",
+      value: "5.00",
+      time: "2026-10-31T12:46:47.000Z",
+    });
+    assert.equal(isVerifiedBalanceRecoveryTxn(audited), true);
+    assert.equal(firstVerifiedRecoveryTxn([audited])?.id, "7RG29592AA729850V");
+  });
+
+  it("correlated capture txn id marks verified recovery", () => {
+    const correlated = new Set(["DESK_CAPTURE_TXN_99"]);
+    const t = txn({
+      id: "DESK_CAPTURE_TXN_99",
+      value: "6.00",
+      time: "2026-11-05T12:00:00.000Z",
+    });
+    assert.equal(isVerifiedBalanceRecoveryTxn(t), false);
+    assert.equal(isVerifiedBalanceRecoveryTxn(t, correlated), true);
+    assert.equal(
+      firstVerifiedRecoveryTxn([t], correlated)?.id,
+      "DESK_CAPTURE_TXN_99"
+    );
+  });
+
+  it("picks earliest verified among mixed qualifying + audited", () => {
     const first = firstVerifiedRecoveryTxn([
+      txn({
+        id: "SETUP",
+        value: "1.00",
+        time: "2026-10-30T10:00:00.000Z",
+      }),
+      txn({
+        id: "GENERIC_LATER",
+        value: "5.00",
+        time: "2026-11-02T12:00:00.000Z",
+      }),
+      txn({
+        id: "57J03146YN2648933",
+        value: "5.00",
+        time: "2026-10-31T12:00:00.000Z",
+      }),
+    ]);
+    assert.equal(first?.id, "57J03146YN2648933");
+  });
+
+  it("completed_payment rows excluded from verified total", () => {
+    const completedOnly: RecoveredMrrRow = {
+      id: "paypal_GENERIC",
+      subscriptionId: "I-AAA",
+      recoveryAction: "capture_outstanding",
+      amountRecovered: money("5.00"),
+      deskStatus: "RECOVERED",
+      transactionId: "GENERIC",
+      transactionStatus: "COMPLETED",
+      recoveredAt: "2026-10-31T12:00:00.000Z",
+      outstandingCleared: true,
+      source: "paypal_transactions",
+      pending: false,
+      attribution: "completed_payment",
+    };
+    const verified: RecoveredMrrRow = {
+      id: "paypal_7RG29592AA729850V",
+      subscriptionId: "I-J8R13K0F76X4",
+      recoveryAction: "capture_outstanding",
+      amountRecovered: money("5.00"),
+      deskStatus: "RECOVERED",
+      transactionId: "7RG29592AA729850V",
+      transactionStatus: "COMPLETED",
+      recoveredAt: "2026-10-31T12:46:47.000Z",
+      outstandingCleared: true,
+      source: "paypal_transactions",
+      pending: false,
+      attribution: "verified_recovery",
+    };
+    assert.equal(isVerifiedRecoveryRow(completedOnly), false);
+    assert.equal(isVerifiedRecoveryRow(verified), true);
+    assert.equal(sumRecoveredUsd([verified, completedOnly]), 5);
+  });
+});
+
+describe("first qualifying vs verified", () => {
+  it("firstQualifyingCompletedTxn picks earliest COMPLETED ≥ $5", () => {
+    const first = firstQualifyingCompletedTxn([
       txn({
         id: "SETUP",
         value: "1.00",
@@ -109,7 +218,7 @@ describe("first-$5 verified recovery attribution", () => {
 
   it("returns null when only setup-fee COMPLETED exists", () => {
     assert.equal(
-      firstVerifiedRecoveryTxn([
+      firstQualifyingCompletedTxn([
         txn({ id: "SETUP", value: "1.00", time: "2026-10-30T10:00:00.000Z" }),
       ]),
       null
@@ -130,6 +239,7 @@ describe("verified total excludes Recovery pending", () => {
     outstandingCleared: true,
     source: "paypal_transactions",
     pending: false,
+    attribution: "verified_recovery",
   };
 
   const pending: RecoveredMrrRow = {
@@ -139,11 +249,12 @@ describe("verified total excludes Recovery pending", () => {
     amountRecovered: money("6.00"),
     deskStatus: "RECOVERED",
     transactionId: null,
-    transactionStatus: "COMPLETED",
+    transactionStatus: null,
     recoveredAt: "2026-11-05T12:00:00.000Z",
     outstandingCleared: true,
     source: "desk_approve",
     pending: true,
+    attribution: "pending",
   };
 
   it("isVerifiedRecoveryRow rejects desk_approve / pending", () => {
@@ -158,5 +269,31 @@ describe("verified total excludes Recovery pending", () => {
   it("sumRecoveredUsd excludes pending from verified total", () => {
     assert.equal(sumRecoveredUsd([verified, pending]), 5);
     assert.equal(sumRecoveredUsd([pending]), 0);
+  });
+});
+
+describe("pending optimistic txn status", () => {
+  it("appendVerifiedRecovery uses transactionStatus null (not COMPLETED)", () => {
+    clearRecoveredSessionForTests();
+    const row = appendVerifiedRecovery({
+      subscriptionId: "I-3FSFGWWRAV4D",
+      amount: money("6.00"),
+      proposalId: "prop_pend_status",
+      paypal: { status: "NO_CONTENT" },
+    });
+    // NO_CONTENT is a real status string from async capture — keep it.
+    // When paypal has no status, pending must stay null (not invent COMPLETED).
+    clearRecoveredSessionForTests();
+    const noStatus = appendVerifiedRecovery({
+      subscriptionId: "I-3FSFGWWRAV4D",
+      amount: money("6.00"),
+      proposalId: "prop_pend_null",
+      paypal: {},
+    });
+    assert.equal(noStatus.pending, true);
+    assert.equal(noStatus.transactionStatus, null);
+    assert.notEqual(noStatus.transactionStatus, "COMPLETED");
+    clearRecoveredSessionForTests();
+    void row;
   });
 });

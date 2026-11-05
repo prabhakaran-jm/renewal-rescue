@@ -329,11 +329,12 @@ export function applySuspendedRetryLaterHonesty(
   }
   return {
     ...result,
-    // Keep Gemini action; RULE badge for honesty (not a silent action coerce).
+    // Keep Gemini provenance (action + ai.source). RULE honesty is a separate
+    // ruleWarning UI block — do not relabel the AI badge as RULE.
     ai: {
-      source: "rule",
+      source: result.ai.source === "gemini" ? "gemini" : result.ai.source,
       model: result.ai.model || "",
-      reason: SUSPENDED_RETRY_LATER_WARNING,
+      reason: result.ai.reason,
     },
     customerMessage: undefined,
     hideCustomerDraft: true,

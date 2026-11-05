@@ -23,12 +23,18 @@ function row(
     },
     transactionId:
       partial.transactionId === undefined ? null : partial.transactionId,
-    transactionStatus: partial.transactionStatus ?? "COMPLETED",
+    transactionStatus:
+      partial.transactionStatus === undefined
+        ? partial.pending || partial.source === "desk_approve"
+          ? null
+          : "COMPLETED"
+        : partial.transactionStatus,
     recoveredAt: partial.recoveredAt || "2026-11-03T12:00:00.000Z",
     source: partial.source || "desk_approve",
     pending: partial.pending,
     proposalId: partial.proposalId,
     note: partial.note,
+    attribution: partial.attribution,
     id: partial.id,
     subscriptionId: partial.subscriptionId,
   };
@@ -168,5 +174,58 @@ describe("mergeRecoveredBoard (optimistic desk overlay)", () => {
   it("coerceRecoveredBoardRow rejects junk", () => {
     assert.equal(coerceRecoveredBoardRow(null), null);
     assert.equal(coerceRecoveredBoardRow({ id: "x" }), null);
+  });
+
+  it("drops optimistic row when verified server row exists for same subscriptionId", () => {
+    const optimistic = row({
+      id: "desk_approve_1",
+      subscriptionId: "I-3FSFGWWRAV4D",
+      proposalId: "prop_abc",
+      transactionId: "PENDINGTXN",
+      source: "desk_approve",
+      pending: true,
+      recoveredAt: "2026-11-05T15:00:00.000Z",
+    });
+    const server = row({
+      id: "paypal_7RG29592AA729850V",
+      subscriptionId: "I-3FSFGWWRAV4D",
+      transactionId: "7RG29592AA729850V",
+      source: "paypal_transactions",
+      attribution: "verified_recovery",
+      pending: false,
+      recoveredAt: "2026-11-05T15:01:00.000Z",
+      amountRecovered: { currency_code: "USD", value: "6.00" },
+    });
+    const merged = mergeRecoveredBoard([server], [optimistic]);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0].id, "paypal_7RG29592AA729850V");
+    assert.equal(merged[0].source, "paypal_transactions");
+    assert.equal(sumRecoveredBoardUsd(merged), 6);
+  });
+
+  it("keeps optimistic when server completed_payment is not verified for same sub", () => {
+    const optimistic = row({
+      id: "desk_approve_1",
+      subscriptionId: "I-GSX3DV4JFYK2",
+      proposalId: "prop_new",
+      transactionId: "DESKTXN1",
+      source: "desk_approve",
+      pending: true,
+    });
+    const server = row({
+      id: "paypal_4D9358391Y4514409",
+      subscriptionId: "I-GSX3DV4JFYK2",
+      transactionId: "4D9358391Y4514409",
+      source: "paypal_transactions",
+      attribution: "completed_payment",
+      pending: false,
+    });
+    const merged = mergeRecoveredBoard([server], [optimistic]);
+    assert.equal(merged.length, 2);
+    assert.equal(sumRecoveredBoardUsd(merged), 0);
+    assert.equal(
+      recoveryBoardSourceLabel(server),
+      "Completed subscription payment"
+    );
   });
 });

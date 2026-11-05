@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { activateAfterCaptureAction } from "../src/lib/recovery/activate.ts";
+import {
+  activateAfterCaptureAction,
+  extractPaypalErrorName,
+} from "../src/lib/recovery/activate.ts";
 import type { PaypalSubscription } from "../src/lib/paypal/billing.ts";
 
 function makeErr(
@@ -78,5 +81,21 @@ describe("activateAfterCaptureAction GET-verify", () => {
     });
     assert.equal(r.ok, true);
     assert.equal(r.restored, true);
+  });
+});
+
+describe("extractPaypalErrorName", () => {
+  it("returns body.name when present", () => {
+    const err = makeErr(422, "SUBSCRIPTION_STATUS_INVALID", "cannot activate");
+    assert.equal(extractPaypalErrorName(err), "SUBSCRIPTION_STATUS_INVALID");
+  });
+
+  it("returns undefined when no body.name (no message regex fallback)", () => {
+    const err = new Error(
+      "PayPal POST /v1/billing/subscriptions/I-X/activate → HTTP 422: UNPROCESSABLE_ENTITY"
+    ) as Error & { status: number; body: { message: string } };
+    err.status = 422;
+    err.body = { message: "UNPROCESSABLE_ENTITY something" };
+    assert.equal(extractPaypalErrorName(err), undefined);
   });
 });

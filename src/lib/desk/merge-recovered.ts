@@ -22,6 +22,8 @@ export type RecoveredBoardRow = {
   pending?: boolean;
   proposalId?: string;
   note?: string;
+  /** Honest attribution from server — verified vs completed payment. */
+  attribution?: "verified_recovery" | "completed_payment" | "pending" | string;
 };
 
 /** Dedupe key: transactionId → proposalId → id. */
@@ -52,10 +54,20 @@ function sortNewestFirst(rows: RecoveredBoardRow[]): RecoveredBoardRow[] {
   );
 }
 
+function isServerVerifiedForSub(row: RecoveredBoardRow): boolean {
+  if (row.pending) return false;
+  if (row.source === "desk_approve") return false;
+  if (row.source !== "paypal_transactions") return false;
+  if (row.attribution === "completed_payment") return false;
+  return true;
+}
+
 /**
  * Merge server board rows with optimistic Approve overlays.
  * Server wins on matching txn / proposal / id; optimistic kept when server lags
  * (including empty server responses).
+ * Drop optimistic row when a verified server row exists for the same
+ * subscriptionId (avoids double-row after settle Refresh).
  */
 export function mergeRecoveredBoard(
   serverRows: RecoveredBoardRow[],
@@ -63,14 +75,20 @@ export function mergeRecoveredBoard(
 ): RecoveredBoardRow[] {
   const byKey = new Map<string, RecoveredBoardRow>();
   const covered = new Set<string>();
+  const verifiedSubs = new Set<string>();
 
   for (const r of serverRows) {
     const primary = recoveredRowDedupeKey(r);
     byKey.set(primary, r);
     for (const k of rowKeys(r)) covered.add(k);
+    if (isServerVerifiedForSub(r) && r.subscriptionId) {
+      verifiedSubs.add(r.subscriptionId);
+    }
   }
 
   for (const r of optimisticRows) {
+    // Verified server row for same sub → drop optimistic overlay (no double-row).
+    if (r.subscriptionId && verifiedSubs.has(r.subscriptionId)) continue;
     const keys = rowKeys(r);
     if (keys.some((k) => covered.has(k))) continue;
     const primary = recoveredRowDedupeKey(r);
@@ -82,14 +100,17 @@ export function mergeRecoveredBoard(
   return sortNewestFirst([...byKey.values()]);
 }
 
-/** Verified total — excludes Recovery pending / desk_approve overlays. */
+/** Verified total — excludes Recovery pending / desk_approve / completed_payment. */
 export function isVerifiedBoardRow(row: {
   source?: string;
   pending?: boolean;
+  attribution?: string;
 }): boolean {
   if (row.pending) return false;
   if (row.source === "desk_approve") return false;
-  return row.source === "paypal_transactions";
+  if (row.source !== "paypal_transactions") return false;
+  if (row.attribution === "completed_payment") return false;
+  return true;
 }
 
 export function sumRecoveredBoardUsd(rows: RecoveredBoardRow[]): number {
@@ -101,12 +122,16 @@ export function sumRecoveredBoardUsd(rows: RecoveredBoardRow[]): number {
   }, 0);
 }
 
-/** Board source badge: verified vs Recovery pending. */
+/** Board source badge: verified vs completed payment vs Recovery pending. */
 export function recoveryBoardSourceLabel(row: {
   source?: string;
   pending?: boolean;
+  attribution?: string;
 }): string {
   if (row.pending || row.source === "desk_approve") return "Recovery pending";
+  if (row.attribution === "completed_payment") {
+    return "Completed subscription payment";
+  }
   if (row.source === "paypal_transactions") return "Verified";
   return row.source || "unknown";
 }
@@ -141,6 +166,11 @@ export function coerceRecoveredBoardRow(
     return null;
   }
   const amountNum = Number.parseFloat(money.value);
+  const source = typeof r.source === "string" ? r.source : "desk_approve";
+  const pending =
+    typeof r.pending === "boolean"
+      ? r.pending
+      : source === "desk_approve";
   return {
     id: r.id,
     subscriptionId: r.subscriptionId,
@@ -151,20 +181,23 @@ export function coerceRecoveredBoardRow(
     },
     transactionId:
       typeof r.transactionId === "string" ? r.transactionId : null,
+    // Pending overlays: keep null status — do not invent COMPLETED.
     transactionStatus:
-      typeof r.transactionStatus === "string" ? r.transactionStatus : null,
+      typeof r.transactionStatus === "string"
+        ? r.transactionStatus
+        : pending
+          ? null
+          : null,
     recoveredAt:
       typeof r.recoveredAt === "string"
         ? r.recoveredAt
         : new Date().toISOString(),
-    source: typeof r.source === "string" ? r.source : "desk_approve",
-    pending:
-      typeof r.pending === "boolean"
-        ? r.pending
-        : (typeof r.source === "string" ? r.source : "desk_approve") ===
-          "desk_approve",
+    source,
+    pending,
     proposalId: typeof r.proposalId === "string" ? r.proposalId : undefined,
     note: typeof r.note === "string" ? r.note : undefined,
+    attribution:
+      typeof r.attribution === "string" ? r.attribution : undefined,
   };
 }
 

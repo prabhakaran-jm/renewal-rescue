@@ -23,17 +23,18 @@ export type ActivateDeps = {
   log?: (message: string, extra?: Record<string, unknown>) => void;
 };
 
-function extractPaypalErrorName(err: unknown): string | undefined {
+/**
+ * PayPal error `name` from a thrown paypalFetch error body only.
+ * No message-regex fallback — returns undefined when body.name is absent.
+ */
+export function extractPaypalErrorName(err: unknown): string | undefined {
   if (!err || typeof err !== "object") return undefined;
   const body = (err as { body?: unknown }).body;
   if (body && typeof body === "object" && body !== null) {
     const name = (body as { name?: unknown }).name;
     if (typeof name === "string" && name.trim()) return name.trim();
   }
-  const message = err instanceof Error ? err.message : String(err);
-  // PayPal often embeds NAME in message; prefer body.name when available.
-  const m = message.match(/\b([A-Z][A-Z0-9_]{3,})\b/);
-  return m?.[1];
+  return undefined;
 }
 
 function defaultLog(message: string, extra?: Record<string, unknown>) {

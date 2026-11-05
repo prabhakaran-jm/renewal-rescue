@@ -4,17 +4,29 @@ import {
   type PaypalSubscriptionTransaction,
 } from "@/lib/paypal/billing";
 import {
+  clearRecoverySessionForTests,
+  correlatedCaptureTxnIds,
+  recoverySessionRows,
+  setRecoverySessionRows,
+} from "@/lib/desk/recovery-session";
+import {
+  firstQualifyingCompletedTxn,
   firstVerifiedRecoveryTxn,
   isRecoveredTransaction,
 } from "@/lib/desk/recovery-txn";
 import { recoveredMrrSubscriptionIds } from "@/lib/desk/seed";
 
 export {
+  AUDITED_VERIFIED_RECOVERY_TXN_IDS,
+  firstQualifyingCompletedTxn,
   firstVerifiedRecoveryTxn,
   hasFirstVerifiedRecovery,
+  isAuditedVerifiedRecoveryTxnId,
   isRecoveredTransaction,
+  isVerifiedBalanceRecoveryTxn,
   RECOVERED_MRR_MIN_GROSS_USD,
 } from "@/lib/desk/recovery-txn";
+export { correlatedCaptureTxnIds } from "@/lib/desk/recovery-session";
 
 /**
  * Verified balance-recovery board — derived from live PayPal subscription
@@ -25,16 +37,22 @@ export {
  * - No FAILED rows in the transactions list (failures show on subscription
  *   outstanding / failed_payments_count, not as txn status=FAILED here).
  *
- * Attribution rule (recomputed each Refresh from the live txn list):
- * per subscription, only the **first** COMPLETED USD gross ≥ $5 counts as
- * verified balance recovery (excludes $1 setup fee).
- *
- * Undercounts double recoveries on the same subscription; escalate to
- * Approve-time correlation (Request-Id / time window) if needed.
+ * Attribution (recomputed each Refresh from the live txn list):
+ * - Qualifying payment = first COMPLETED USD gross ≥ $5 (excludes $1 setup).
+ * - Verified balance recovery only when that txn is on the audited historical
+ *   allowlist (7RG29592AA729850V, 57J03146YN2648933 — $16 board ledger) OR
+ *   correlated via a recorded desk Approve/capture txn id.
+ * - Uncorrelated qualifying payments are labeled “Completed subscription
+ *   payment” and excluded from the verified total.
  *
  * Optimistic / desk_approve rows are “Recovery pending” and must be excluded
  * from the verified total until the PayPal txn list confirms them.
  */
+
+export type RecoveryAttribution =
+  | "verified_recovery"
+  | "completed_payment"
+  | "pending";
 
 export type RecoveredMrrRow = {
   id: string;
@@ -52,19 +70,23 @@ export type RecoveredMrrRow = {
   pending?: boolean;
   proposalId?: string;
   note?: string;
+  /** Honest board attribution — verified vs completed payment vs pending. */
+  attribution?: RecoveryAttribution;
 };
 
-const g = globalThis as typeof globalThis & {
-  __renewalRescueRecoveredSession?: RecoveredMrrRow[];
-};
+function sessionRows(): RecoveredMrrRow[] {
+  return recoverySessionRows() as RecoveredMrrRow[];
+}
 
 function txnToRow(
   subscriptionId: string,
-  t: PaypalSubscriptionTransaction
+  t: PaypalSubscriptionTransaction,
+  attribution: "verified_recovery" | "completed_payment"
 ): RecoveredMrrRow | null {
   if (!isRecoveredTransaction(t)) return null;
   const gross = t.amount_with_breakdown!.gross_amount!;
   const txnId = t.id || null;
+  const verified = attribution === "verified_recovery";
   return {
     id: txnId ? `paypal_${txnId}` : `paypal_${subscriptionId}_${t.time}`,
     subscriptionId,
@@ -80,12 +102,16 @@ function txnToRow(
     outstandingCleared: true,
     source: "paypal_transactions",
     pending: false,
-    note: "First COMPLETED USD ≥ $5 from live GET …/transactions (verified balance recovery).",
+    attribution,
+    note: verified
+      ? "Verified balance recovery — audited historical capture or desk Approve/capture correlation."
+      : "Completed subscription payment — qualifying COMPLETED ≥ $5 without desk capture correlation.",
   };
 }
 
 export async function listRecoveredMrrFromPaypal(
-  subscriptionIds: string[] = recoveredMrrSubscriptionIds()
+  subscriptionIds: string[] = recoveredMrrSubscriptionIds(),
+  correlatedTxnIds: ReadonlySet<string> = correlatedCaptureTxnIds()
 ): Promise<RecoveredMrrRow[]> {
   const bySub = new Map<string, RecoveredMrrRow>();
   for (const subscriptionId of subscriptionIds) {
@@ -96,48 +122,59 @@ export async function listRecoveredMrrFromPaypal(
       // Skip ids that 404 / error — board still returns other recoveries
       continue;
     }
-    // First ≥ $5 COMPLETED only — undercounts double recoveries on purpose.
-    const first = firstVerifiedRecoveryTxn(txns);
-    if (!first) continue;
-    const row = txnToRow(subscriptionId, first);
-    if (!row) continue;
-    bySub.set(subscriptionId, row);
+    // Prefer verified (allowlist / correlated); else honest completed payment.
+    const verified = firstVerifiedRecoveryTxn(txns, correlatedTxnIds);
+    if (verified) {
+      const row = txnToRow(subscriptionId, verified, "verified_recovery");
+      if (row) bySub.set(subscriptionId, row);
+      continue;
+    }
+    const qualifying = firstQualifyingCompletedTxn(txns);
+    if (!qualifying) continue;
+    const row = txnToRow(subscriptionId, qualifying, "completed_payment");
+    if (row) bySub.set(subscriptionId, row);
   }
   return [...bySub.values()].sort((a, b) =>
     a.recoveredAt < b.recoveredAt ? 1 : a.recoveredAt > b.recoveredAt ? -1 : 0
   );
 }
 
-function sessionRows(): RecoveredMrrRow[] {
-  if (!g.__renewalRescueRecoveredSession) {
-    g.__renewalRescueRecoveredSession = [];
-  }
-  return g.__renewalRescueRecoveredSession;
-}
-
-/** Live PayPal first-$5 rows + same-instance Approve pendings (deduped). */
+/** Live PayPal rows + same-instance Approve pendings (deduped). */
 export async function listRecoveredMrr(): Promise<RecoveredMrrRow[]> {
-  const fromPaypal = await listRecoveredMrrFromPaypal();
+  const correlated = correlatedCaptureTxnIds();
+  const fromPaypal = await listRecoveredMrrFromPaypal(
+    recoveredMrrSubscriptionIds(),
+    correlated
+  );
   const byKey = new Map<string, RecoveredMrrRow>();
   for (const r of fromPaypal) {
     byKey.set(r.transactionId || r.id, r);
   }
   for (const r of sessionRows()) {
     const key = r.transactionId || r.proposalId || r.id;
-    if (!byKey.has(key)) byKey.set(key, { ...r, pending: true });
+    if (!byKey.has(key)) byKey.set(key, { ...r, pending: true, attribution: "pending" });
   }
   return [...byKey.values()].sort((a, b) =>
     a.recoveredAt < b.recoveredAt ? 1 : a.recoveredAt > b.recoveredAt ? -1 : 0
   );
 }
 
-/** Verified total only — excludes Recovery pending / desk_approve overlays. */
+/** Verified total only — excludes pending, desk_approve, and completed_payment. */
 export function isVerifiedRecoveryRow(row: {
   source?: string;
   pending?: boolean;
+  attribution?: RecoveryAttribution | string;
 }): boolean {
   if (row.pending) return false;
-  return row.source === "paypal_transactions";
+  if (row.source !== "paypal_transactions") return false;
+  if (row.attribution === "completed_payment") return false;
+  if (row.attribution === "pending") return false;
+  // attribution verified_recovery or legacy rows without attribution field
+  // that already passed source/pending checks — prefer explicit when present.
+  if (row.attribution != null && row.attribution !== "verified_recovery") {
+    return false;
+  }
+  return true;
 }
 
 export function sumRecoveredUsd(rows: RecoveredMrrRow[]): number {
@@ -177,19 +214,24 @@ export type AppendRecoveredInput = {
 
 /**
  * Session append after cleared capture — Recovery pending until the live
- * txn list confirms the first COMPLETED ≥ $5. Prefer live list on Refresh.
+ * txn list confirms via allowlist or recorded capture txn correlation.
+ * Prefer live list on Refresh. Pending rows use transactionStatus: null
+ * until PayPal confirms (do not default COMPLETED).
  */
 export function appendVerifiedRecovery(
   input: AppendRecoveredInput
 ): RecoveredMrrRow {
   const rows = sessionRows();
   const txnId = extractTxnId(input.paypal);
-  const txnStatus =
+  let txnStatus: string | null = null;
+  if (
     input.paypal &&
     typeof input.paypal === "object" &&
     "status" in input.paypal
-      ? String((input.paypal as { status?: string }).status ?? "")
-      : null;
+  ) {
+    const raw = (input.paypal as { status?: unknown }).status;
+    if (typeof raw === "string" && raw.trim()) txnStatus = raw.trim();
+  }
 
   if (input.proposalId) {
     const existing = rows.find((r) => r.proposalId === input.proposalId);
@@ -214,11 +256,13 @@ export function appendVerifiedRecovery(
     },
     deskStatus: "RECOVERED",
     transactionId: txnId,
-    transactionStatus: txnStatus || "COMPLETED",
+    // Pending: never invent COMPLETED — null until live txn confirms.
+    transactionStatus: txnStatus,
     recoveredAt: new Date().toISOString(),
     outstandingCleared: true,
     source: "desk_approve",
     pending: true,
+    attribution: "pending",
     proposalId: input.proposalId,
     note:
       input.note ||
@@ -226,6 +270,11 @@ export function appendVerifiedRecovery(
   };
 
   rows.unshift(row);
-  g.__renewalRescueRecoveredSession = rows;
+  setRecoverySessionRows(rows);
   return row;
+}
+
+/** Test helper — clear same-instance session rows. */
+export function clearRecoveredSessionForTests(): void {
+  clearRecoverySessionForTests();
 }

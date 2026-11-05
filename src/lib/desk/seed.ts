@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { deskCardBadge } from "@/lib/desk/card-labels";
+import { correlatedCaptureTxnIds } from "@/lib/desk/recovery-session";
 import { hasFirstVerifiedRecovery } from "@/lib/desk/recovery-txn";
 import {
   getSubscription,
@@ -192,7 +193,7 @@ export function preferredCaptureId() {
   return preferredCaptureIdFromEnv();
 }
 
-/** List seeded subs with live PayPal Billing GET refresh. */
+/** List seeded subs with live PayPal Billing GET refresh (parallel per-sub). */
 export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
   const entries = resolveSeedSubscriptionEntries();
   if (entries.length < 1) {
@@ -202,72 +203,78 @@ export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
   }
 
   const refreshedAt = new Date().toISOString();
-  const rows: DeskSubscription[] = [];
+  const correlated = correlatedCaptureTxnIds();
+  const preferredId = preferredCaptureIdFromEnv();
 
-  for (const { key, row } of entries) {
-    if (!row?.id) continue;
-    let live;
-    try {
-      live = await getSubscription(row.id);
-    } catch (err) {
-      const status =
-        err && typeof err === "object" && "status" in err
-          ? Number((err as { status?: number }).status)
-          : undefined;
-      if (status === 404) continue;
-      throw err;
-    }
-    const outstanding = live.billing_info?.outstanding_balance ?? null;
-    const outstandingRaw = outstanding
-      ? Number.parseFloat(outstanding.value)
-      : 0;
-    const outstandingValue = Number.isFinite(outstandingRaw)
-      ? outstandingRaw
-      : 0;
+  const settled = await Promise.all(
+    entries.map(async ({ key, row }) => {
+      if (!row?.id) return null;
+      let live;
+      try {
+        live = await getSubscription(row.id);
+      } catch (err) {
+        const status =
+          err && typeof err === "object" && "status" in err
+            ? Number((err as { status?: number }).status)
+            : undefined;
+        if (status === 404) return null;
+        throw err;
+      }
+      const outstanding = live.billing_info?.outstanding_balance ?? null;
+      const outstandingRaw = outstanding
+        ? Number.parseFloat(outstanding.value)
+        : 0;
+      const outstandingValue = Number.isFinite(outstandingRaw)
+        ? outstandingRaw
+        : 0;
 
-    // First COMPLETED ≥ $5 → not a fixture even when outstanding is $0.
-    let hasVerifiedRecovery = false;
-    try {
-      const txns = await listSubscriptionTransactions(live.id);
-      hasVerifiedRecovery = hasFirstVerifiedRecovery(txns);
-    } catch {
-      hasVerifiedRecovery = false;
-    }
+      // Verified recovery = audited allowlist or desk capture correlation.
+      let hasVerifiedRecovery = false;
+      try {
+        const txns = await listSubscriptionTransactions(live.id);
+        hasVerifiedRecovery = hasFirstVerifiedRecovery(txns, correlated);
+      } catch {
+        hasVerifiedRecovery = false;
+      }
 
-    const badge = deskCardBadge({
-      outstandingValue,
-      status: live.status,
-      hasVerifiedRecovery,
-    });
+      const badge = deskCardBadge({
+        outstandingValue,
+        status: live.status,
+        hasVerifiedRecovery,
+      });
 
-    const outstandingNormalized = outstanding
-      ? {
-          currency_code: outstanding.currency_code || "USD",
-          value: outstandingValue.toFixed(2),
-        }
-      : null;
+      const outstandingNormalized = outstanding
+        ? {
+            currency_code: outstanding.currency_code || "USD",
+            value: outstandingValue.toFixed(2),
+          }
+        : null;
 
-    rows.push({
-      key,
-      id: live.id,
-      planId: live.plan_id || row.planId || "",
-      planKey: row.planKey || key,
-      failurePath: row.failurePath || key,
-      note: row.note || "",
-      status: live.status,
-      outstanding: outstandingNormalized,
-      outstandingValue,
-      failedPaymentsCount: live.billing_info?.failed_payments_count ?? null,
-      nextBillingTime: live.billing_info?.next_billing_time ?? null,
-      lastPayment: live.billing_info?.last_payment ?? null,
-      refreshedAt,
-      preferredCaptureTarget: live.id === preferredCaptureIdFromEnv(),
-      fixtureLabeled: badge.fixtureLabeled,
-      cardLabel: badge.label,
-      hasVerifiedRecovery,
-      currentPlanPrice: DEFAULT_PLAN_PRICE,
-    });
-  }
+      const deskRow: DeskSubscription = {
+        key,
+        id: live.id,
+        planId: live.plan_id || row.planId || "",
+        planKey: row.planKey || key,
+        failurePath: row.failurePath || key,
+        note: row.note || "",
+        status: live.status,
+        outstanding: outstandingNormalized,
+        outstandingValue,
+        failedPaymentsCount: live.billing_info?.failed_payments_count ?? null,
+        nextBillingTime: live.billing_info?.next_billing_time ?? null,
+        lastPayment: live.billing_info?.last_payment ?? null,
+        refreshedAt,
+        preferredCaptureTarget: live.id === preferredId,
+        fixtureLabeled: badge.fixtureLabeled,
+        cardLabel: badge.label,
+        hasVerifiedRecovery,
+        currentPlanPrice: DEFAULT_PLAN_PRICE,
+      };
+      return deskRow;
+    })
+  );
+
+  const rows = settled.filter((r): r is DeskSubscription => r != null);
 
   rows.sort((a, b) => {
     if (a.preferredCaptureTarget !== b.preferredCaptureTarget) {
