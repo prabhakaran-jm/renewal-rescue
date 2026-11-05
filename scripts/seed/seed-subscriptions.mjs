@@ -80,14 +80,15 @@ const DEMO_OUTSTANDING = {
 };
 
 /**
- * Step 3: four setupFee outstanding shells.
- * Roles: vercel-smoke may spend 1, film 1, leave ≥2 for judges.
+ * Step 3 / spare top-up: setupFee outstanding shells.
+ * Roles: smoke/film disposable; judge-* leave for judges (do not Approve until needed).
+ * Nov 5+: six shells so desk has 4–6 disposable spares after prior film/smoke spend.
  */
 const OUTSTANDING_BATCH = [
   {
     key: "outstanding-smoke",
     plan: "setupFee",
-    note: "Step3 shell A — Vercel money-safe smoke spare (prefer wrong-passcode before live capture)",
+    note: "Spare shell A — disposable smoke / wrong-passcode before live capture",
     given_name: "Smoke",
     surname: "Outstanding",
     email: "buyer-outstanding-smoke@example.com",
@@ -95,7 +96,7 @@ const OUTSTANDING_BATCH = [
   {
     key: "outstanding-film",
     plan: "setupFee",
-    note: "Step3 shell B — film Deny→Propose→Approve capture",
+    note: "Spare shell B — film Deny→Propose→Approve capture",
     given_name: "Film",
     surname: "Outstanding",
     email: "buyer-outstanding-film@example.com",
@@ -103,7 +104,7 @@ const OUTSTANDING_BATCH = [
   {
     key: "outstanding-judge-1",
     plan: "setupFee",
-    note: "Step3 shell C — leave for judges (do not capture in smoke/film)",
+    note: "Spare shell C — leave for judges (do not capture in smoke/film)",
     given_name: "Judge",
     surname: "One",
     email: "buyer-outstanding-j1@example.com",
@@ -111,10 +112,26 @@ const OUTSTANDING_BATCH = [
   {
     key: "outstanding-judge-2",
     plan: "setupFee",
-    note: "Step3 shell D — leave for judges (do not capture in smoke/film)",
+    note: "Spare shell D — leave for judges (do not capture in smoke/film)",
     given_name: "Judge",
     surname: "Two",
     email: "buyer-outstanding-j2@example.com",
+  },
+  {
+    key: "outstanding-judge-3",
+    plan: "setupFee",
+    note: "Spare shell E — leave for judges (do not capture in smoke/film)",
+    given_name: "Judge",
+    surname: "Three",
+    email: "buyer-outstanding-j3@example.com",
+  },
+  {
+    key: "outstanding-judge-4",
+    plan: "setupFee",
+    note: "Spare shell F — leave for judges (do not capture in smoke/film)",
+    given_name: "Judge",
+    surname: "Four",
+    email: "buyer-outstanding-j4@example.com",
   },
 ];
 
@@ -291,7 +308,7 @@ async function main() {
     printSeedSubscriptionIdsHint(subscriptions);
     console.log("\nNext (interactive — each shell expires ~3h if unapproved):");
     console.log("  CRITICAL: Drain FIRST. Approving while funded → ACTIVE / $0 or $1, not SUSPENDED+$5.");
-    console.log("  For EACH of the four approve URLs above:");
+    console.log("  For EACH of the approve URLs above:");
     console.log("    1. Sandbox PERSONAL buyer — balance ~$0; remove good cards");
     console.log("    2. Optional: add only CCREJECT test card 4556747948786484 (declines)");
     console.log("    3. THEN open approve URL → Agree & Subscribe");
@@ -299,8 +316,8 @@ async function main() {
     console.log("    5. Restore funding WITHOUT capturing on the desk");
     console.log("  Then: node scripts/seed/seed-subscriptions.mjs --refresh");
     console.log("        npm run check:daily");
-    console.log("  Paste SEED_SUBSCRIPTION_IDS into .env / Vercel (see hint above).");
-    console.log("  Budget: smoke≤1, film≤1, leave ≥2 for judges.");
+    console.log("  Before Vercel paste: each id must show outstanding ≥ $5 AND no prior COMPLETED USD ≥ $5.");
+    console.log("  Budget: smoke≤1, film≤1, leave remaining for judges.");
     return ids;
   }
 

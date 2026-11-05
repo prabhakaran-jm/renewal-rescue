@@ -63,7 +63,7 @@ npm run seed:outstanding-batch
 node scripts/seed/seed-subscriptions.mjs --outstanding-batch --force
 ```
 
-Keys: `outstanding-smoke`, `outstanding-film`, `outstanding-judge-1`, `outstanding-judge-2`.
+Keys: `outstanding-smoke`, `outstanding-film`, `outstanding-judge-1`…`outstanding-judge-4` (six shells for spare top-up).
 
 **Interactive (required for SUSPENDED + ~$5 outstanding):**
 
@@ -71,7 +71,7 @@ Keys: `outstanding-smoke`, `outstanding-film`, `outstanding-judge-1`, `outstandi
 2. Then open each approve URL → Agree & Subscribe.
 3. Expect **SUSPENDED + outstanding ≈ $5** (setup fee fails → CONTINUE). Approving while funded → ACTIVE / $0–$1 (wrong outcome — re-run `--outstanding-batch --force`).
 4. Restore funding without capturing → `--refresh` + `npm run check:daily`.
-5. Paste printed `SEED_SUBSCRIPTION_IDS` into `.env` / Vercel. Budget: smoke ≤1, film ≤1, leave ≥2 for judges.
+5. **Gate before Vercel:** PayPal outstanding ≥ $5 **and** no prior COMPLETED USD ≥ $5 (first-$5 attribution). Then paste `SEED_SUBSCRIPTION_IDS`. Budget: smoke ≤1, film ≤1, leave the rest for judges.
 
 Also set `DEMO_PASSCODE` (Approve/Deny use `timingSafeEqual`; never commit/log the value).
 ```
