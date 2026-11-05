@@ -2,7 +2,10 @@
  * Customer card badges for the recovery desk.
  *
  * fixtureLabeled must NOT be true solely because outstanding is $0 when a
- * first COMPLETED USD ≥ $5 recovery txn exists on the live list.
+ * verified ≥ $5 COMPLETED recovery txn exists on the live list.
+ *
+ * Outstanding balance is checked before verified-recovery labels so a sub
+ * that still owes money never shows “Balance recovered…”.
  */
 
 export type DeskCardBadgeKind =
@@ -20,7 +23,7 @@ export type DeskCardBadge = {
 
 /**
  * Derive card badge from live outstanding, subscription status, and whether
- * the first verified ≥ $5 COMPLETED recovery exists.
+ * a desk-verified ≥ $5 COMPLETED recovery exists (allowlist / correlation).
  */
 export function deskCardBadge(opts: {
   outstandingValue: number;
@@ -30,6 +33,15 @@ export function deskCardBadge(opts: {
   const outstanding = Number.isFinite(opts.outstandingValue)
     ? opts.outstandingValue
     : 0;
+
+  // Outstanding wins — even if a verified recovery txn also exists.
+  if (outstanding > 0) {
+    return {
+      kind: "outstanding",
+      label: "Outstanding",
+      fixtureLabeled: false,
+    };
+  }
 
   if (opts.hasVerifiedRecovery) {
     if (opts.status === "ACTIVE") {
@@ -42,14 +54,6 @@ export function deskCardBadge(opts: {
     return {
       kind: "balance_recovered_pending",
       label: "Balance recovered, reactivation pending",
-      fixtureLabeled: false,
-    };
-  }
-
-  if (outstanding > 0) {
-    return {
-      kind: "outstanding",
-      label: "Outstanding",
       fixtureLabeled: false,
     };
   }

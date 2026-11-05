@@ -156,4 +156,19 @@ describe("approve-copy", () => {
       "Fallback recommends revise_cheaper. Merchant can override and capture the 5.00 USD outstanding now."
     );
   });
+
+  it("captureNowHint — Gemini provenance retained (not RULE) for retry_later", () => {
+    // Honesty overlay keeps ai.source gemini; hint must not say RULE recommends.
+    const hint = captureNowHint({
+      action: "retry_later",
+      aiSource: "gemini",
+      outstandingValue: 6,
+      currencyCode: "USD",
+    });
+    assert.equal(
+      hint,
+      "Gemini recommends retry_later. Merchant can override and capture the 6.00 USD outstanding now."
+    );
+    assert.equal(hint.includes("RULE recommends"), false);
+  });
 });

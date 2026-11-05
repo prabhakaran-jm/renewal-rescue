@@ -85,6 +85,8 @@ export async function paypalFetch<T = unknown>(
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    // Bound Refresh / Billing GET latency so one hung sub does not stall the desk.
+    signal: AbortSignal.timeout(8000),
   });
   const text = await res.text();
   let json: unknown = null;

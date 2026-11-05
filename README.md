@@ -15,7 +15,7 @@ Sandbox outstanding seeds use a **drained-funding recurring charge failure** on 
 3. Select a row → **Propose** (Gemini badge + customer draft when AI path succeeds; Fallback / RULE otherwise).
 4. Optional: **Deny demo** (write-off) → blocked by policy; badge shows `RULE · write-off test`.
 5. **Approve / Deny** require the demo passcode (`DEMO_PASSCODE` on the deployment). Ask the team for the judge passcode — do not invent one.
-6. **Approve one spare; leave others** for the next judge. Do **not** Approve `I-S5J71BPHJBT3` or `I-FWR8V1TKDEFW` unless instructed.
+6. **Approve one spare; leave others** for the next judge.
 
 Local:
 
@@ -54,7 +54,7 @@ Never commit the real passcode. Never log it.
 
 ## Verified balance recovery
 
-Board rule (probe-informed): per subscription, the **first** live transaction with status **COMPLETED** and USD gross **≥ $5** (excludes `$1` setup fee). Recomputed each Refresh from the PayPal txn list. This undercounts double recoveries on the same sub. Optimistic Approve / `desk_approve` rows are labeled **Recovery pending** and **excluded** from the verified total until the txn list confirms.
+Board rule: per subscription, a live **COMPLETED** USD gross **≥ $5** payment (excludes `$1` setup fee) counts as **Verified balance recovery** only when its txn id is on the audited historical allowlist (`7RG29592AA729850V`, `57J03146YN2648933`) or correlated to a recorded desk Approve/capture. Other qualifying payments are labeled **Completed subscription payment** and excluded from the verified total. Optimistic Approve / `desk_approve` rows stay **Recovery pending** (also excluded) until confirmed.
 
 Always-probed history ids (even if env seed list is trimmed): `I-J8R13K0F76X4` (money proof), `I-CNCX69GD2UD8` (cleared film), `I-3FSFGWWRAV4D` (smoke).
 

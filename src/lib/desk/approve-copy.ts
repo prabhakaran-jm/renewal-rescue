@@ -45,6 +45,9 @@ function sourcePhrase(source: AiSourceLabel | undefined): string {
 
 /**
  * Hint next to Capture now — reflects current action + ai.source.
+ * Uses Gemini provenance when ai.source is gemini (even if a separate RULE
+ * warning block is shown for SUSPENDED retry_later honesty). Never say
+ * “RULE recommends…” solely because ruleWarning is present.
  * e.g. "Gemini recommends retry_later. Merchant can override and capture the 6.00 USD outstanding now."
  */
 export function captureNowHint(opts: {

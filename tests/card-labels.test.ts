@@ -48,6 +48,18 @@ describe("deskCardBadge", () => {
     assert.equal(b.kind, "outstanding");
     assert.equal(b.fixtureLabeled, false);
   });
+
+  it("outstanding 5 + hasVerifiedRecovery → Outstanding (not Balance recovered)", () => {
+    const b = deskCardBadge({
+      outstandingValue: 5,
+      status: "SUSPENDED",
+      hasVerifiedRecovery: true,
+    });
+    assert.equal(b.kind, "outstanding");
+    assert.equal(b.label, "Outstanding");
+    assert.equal(b.fixtureLabeled, false);
+    assert.notEqual(b.label, "Balance recovered, reactivation pending");
+  });
 });
 
 describe("formatDeskAmount", () => {
