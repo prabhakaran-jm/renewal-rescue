@@ -22,15 +22,18 @@ export function noMoneyApproveMessage(action: NoMoneyApproveAction): string {
 }
 
 /**
- * Show Capture now override when propose did not pick capture
- * and live outstanding remains.
+ * Show Capture now override when propose did not pick capture,
+ * live outstanding remains, and policy is not blocked.
  */
 export function shouldShowCaptureNow(opts: {
   outstandingValue: number;
   proposalAction: string | null | undefined;
+  /** When false, hide Capture now (e.g. Deny / write-off blocked). */
+  policyOk?: boolean;
 }): boolean {
   if (!(opts.outstandingValue > 0)) return false;
   if (!opts.proposalAction) return false;
+  if (opts.policyOk === false) return false;
   return opts.proposalAction !== "capture_outstanding";
 }
 

@@ -1,10 +1,12 @@
 # Renewal Rescue
 
-Recover **involuntary** MRR when a PayPal subscription renewal fails — AI proposes a capture or revise, policy gates it, and a human merchant Approves. Live money moves only on Approve.
+Recover **involuntary** subscription payments when a PayPal billing charge fails — AI proposes a capture or revise, policy gates it, and a human merchant Approves. Live money moves only on Approve.
 
 **Demo:** [https://renewal-rescue.vercel.app](https://renewal-rescue.vercel.app)
 
-**Never** treat Webhooks Simulator as money proof. Fixture / `$0` outstanding rows are labeled fixture and hidden on the desk by default.
+**Never** treat Webhooks Simulator as money proof. Fixture rows (no outstanding and no verified ≥ $5 COMPLETED recovery) are labeled fixture and hidden on the desk by default.
+
+Sandbox outstanding seeds use a **drained-funding recurring charge failure** on a setup-fee plan (same capture mechanism as a failed renewal). Do not claim the demo proves a natural calendar renewal failure unless you have that evidence.
 
 ## Judge setup (sandbox)
 
@@ -13,7 +15,7 @@ Recover **involuntary** MRR when a PayPal subscription renewal fails — AI prop
 3. Select a row → **Propose** (Gemini badge + customer draft when AI path succeeds; Fallback / RULE otherwise).
 4. Optional: **Deny demo** (write-off) → blocked by policy; badge shows `RULE · write-off test`.
 5. **Approve / Deny** require the demo passcode (`DEMO_PASSCODE` on the deployment). Ask the team for the judge passcode — do not invent one.
-6. Leave spare outstanding shells for other judges. Do **not** Approve `I-S5J71BPHJBT3` or `I-FWR8V1TKDEFW` unless instructed.
+6. **Approve one spare; leave others** for the next judge. Do **not** Approve `I-S5J71BPHJBT3` or `I-FWR8V1TKDEFW` unless instructed.
 
 Local:
 
@@ -29,10 +31,10 @@ npm run build
 
 | Failure | Desk behaviour | Recovery |
 | --- | --- | --- |
-| Renewal charge fails; subscription **SUSPENDED** with outstanding &gt; 0 | Refresh shows live outstanding; Propose suggests `capture_outstanding` (or revise) | Merchant Approve → PayPal outstanding-balance capture (`PayPal-Request-Id` = proposal token id) |
-| Capture accepted async (HTTP 202) | Amber **Pending PayPal confirmation**; desk polls outstanding (~5s, bounded) | When outstanding hits `$0`, settle → **RECOVERED**, activate attempt (SUSPENDED→ACTIVE), MRR board updates (optimistic row until PayPal txn list catches up) |
+| Billing charge fails; subscription **SUSPENDED** with outstanding &gt; 0 | Refresh shows live outstanding; Propose suggests `capture_outstanding` (or revise). Gemini `retry_later` on SUSPENDED keeps the action but shows a RULE warning (PayPal will not auto-retry) and hides the customer draft | Merchant Approve → PayPal outstanding-balance capture (`PayPal-Request-Id` = proposal token id) |
+| Capture accepted async (HTTP 202) | Amber **Pending PayPal confirmation**; desk polls outstanding (~5s, bounded) | When outstanding hits `$0`, settle → balance recovered, POST activate + **GET verify**; ACTIVE → subscription restored, else reactivation pending. Board shows Recovery pending until live txn confirms |
 | Merchant wants retention instead of cash now | **Revise** → cheaper plan proposal | Buyer approve URL for next-cycle price; **not** recovered cash |
-| Write-off / 100% forgive demo | **Deny demo** propose path | Policy blocks; no capture |
+| Write-off / 100% forgive demo | **Deny demo** propose path | Policy blocks; no capture; Capture now hidden while blocked |
 | AI timeout / 429 / malformed / policy fail | Propose still returns a deterministic proposal | Badge shows **Fallback** (never mislabeled as Gemini) |
 
 ## Idempotency
@@ -50,9 +52,9 @@ npm run smoke:money-safe
 
 Never commit the real passcode. Never log it.
 
-## Recovered MRR
+## Verified balance recovery
 
-Board rule (probe-informed): live subscription transactions with status **COMPLETED** and USD gross **≥ $5** (excludes `$1` setup fee). After Approve **RECOVERED**, the desk merges the response row optimistically and polls `GET /api/recovered-mrr` until the txn appears or the total rises — Vercel lambdas do not share session memory.
+Board rule (probe-informed): per subscription, the **first** live transaction with status **COMPLETED** and USD gross **≥ $5** (excludes `$1` setup fee). Recomputed each Refresh from the PayPal txn list. This undercounts double recoveries on the same sub. Optimistic Approve / `desk_approve` rows are labeled **Recovery pending** and **excluded** from the verified total until the txn list confirms.
 
 Always-probed history ids (even if env seed list is trimmed): `I-J8R13K0F76X4` (money proof), `I-CNCX69GD2UD8` (cleared film), `I-3FSFGWWRAV4D` (smoke).
 
@@ -62,7 +64,7 @@ Always-probed history ids (even if env seed list is trimmed): `I-J8R13K0F76X4` (
 - `POST /api/proposals` — `{ subscriptionId?, demoWriteOff?, forceRevise?, forceCapture? }`
 - `POST /api/proposals/:id/approve` — passcode → capture / revise / settle
 - `POST /api/proposals/:id/deny`
-- `GET /api/recovered-mrr` — verified recoveries board
+- `GET /api/recovered-mrr` — verified balance recovery board
 - `POST /api/webhooks/paypal` — signature verify + inbox
 - `GET /api/webhooks/inbox`
 
@@ -78,7 +80,6 @@ Always-probed history ids (even if env seed list is trimmed): `I-J8R13K0F76X4` (
 | --- | --- |
 | **Google Gemini** | In-product propose (`generateContent` JSON); amounts/IDs enforced in code; Fallback when timeout/error/schema/policy fail |
 | **Cursor / coding assistants** | Used to scaffold, implement, and test the desk |
-| **APIMatic Context Plugin** | Used during build for PayPal API context (sponsor prize target) when available |
 
 ## Seed scripts
 

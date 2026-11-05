@@ -3,18 +3,37 @@ import {
   listSubscriptionTransactions,
   type PaypalSubscriptionTransaction,
 } from "@/lib/paypal/billing";
+import {
+  firstVerifiedRecoveryTxn,
+  isRecoveredTransaction,
+} from "@/lib/desk/recovery-txn";
 import { recoveredMrrSubscriptionIds } from "@/lib/desk/seed";
 
+export {
+  firstVerifiedRecoveryTxn,
+  hasFirstVerifiedRecovery,
+  isRecoveredTransaction,
+  RECOVERED_MRR_MIN_GROSS_USD,
+} from "@/lib/desk/recovery-txn";
+
 /**
- * Recovered-MRR board — derived from live PayPal subscription transactions.
+ * Verified balance-recovery board — derived from live PayPal subscription
+ * transactions (not “MRR uplift”).
  *
  * Probe (GET …/I-J8R13K0F76X4/transactions, 2026-11-02):
  * - Two COMPLETED rows: $5.00 capture (7RG29592AA729850V) + $1.00 setup fee.
  * - No FAILED rows in the transactions list (failures show on subscription
  *   outstanding / failed_payments_count, not as txn status=FAILED here).
  *
- * Rule: COMPLETED + USD gross >= 5.00 → recovery (excludes $1 setup fee).
- * Target: I-J8R13K0F76X4 contributes exactly one $5 recovery.
+ * Attribution rule (recomputed each Refresh from the live txn list):
+ * per subscription, only the **first** COMPLETED USD gross ≥ $5 counts as
+ * verified balance recovery (excludes $1 setup fee).
+ *
+ * Undercounts double recoveries on the same subscription; escalate to
+ * Approve-time correlation (Request-Id / time window) if needed.
+ *
+ * Optimistic / desk_approve rows are “Recovery pending” and must be excluded
+ * from the verified total until the PayPal txn list confirms them.
  */
 
 export type RecoveredMrrRow = {
@@ -29,30 +48,15 @@ export type RecoveredMrrRow = {
   recoveredAt: string;
   outstandingCleared: true;
   source: "paypal_transactions" | "desk_approve";
+  /** True for optimistic Approve overlays — not verified yet. */
+  pending?: boolean;
   proposalId?: string;
   note?: string;
 };
 
-/** Min gross USD to count as recovered MRR (excludes setup-fee COMPLETED $1). */
-export const RECOVERED_MRR_MIN_GROSS_USD = 5;
-
 const g = globalThis as typeof globalThis & {
   __renewalRescueRecoveredSession?: RecoveredMrrRow[];
 };
-
-/**
- * Probe-informed filter: COMPLETED USD gross >= $5.
- * Setup-fee $1 COMPLETED rows are excluded.
- */
-export function isRecoveredTransaction(
-  t: PaypalSubscriptionTransaction
-): boolean {
-  if (t.status !== "COMPLETED") return false;
-  const gross = t.amount_with_breakdown?.gross_amount;
-  if (!gross || gross.currency_code !== "USD") return false;
-  const n = Number.parseFloat(gross.value);
-  return Number.isFinite(n) && n + 1e-9 >= RECOVERED_MRR_MIN_GROSS_USD;
-}
 
 function txnToRow(
   subscriptionId: string,
@@ -75,14 +79,15 @@ function txnToRow(
     recoveredAt: t.time || new Date().toISOString(),
     outstandingCleared: true,
     source: "paypal_transactions",
-    note: "From live GET /v1/billing/subscriptions/{id}/transactions (COMPLETED gross ≥ $5).",
+    pending: false,
+    note: "First COMPLETED USD ≥ $5 from live GET …/transactions (verified balance recovery).",
   };
 }
 
 export async function listRecoveredMrrFromPaypal(
   subscriptionIds: string[] = recoveredMrrSubscriptionIds()
 ): Promise<RecoveredMrrRow[]> {
-  const byTxn = new Map<string, RecoveredMrrRow>();
+  const bySub = new Map<string, RecoveredMrrRow>();
   for (const subscriptionId of subscriptionIds) {
     let txns: PaypalSubscriptionTransaction[] = [];
     try {
@@ -91,14 +96,14 @@ export async function listRecoveredMrrFromPaypal(
       // Skip ids that 404 / error — board still returns other recoveries
       continue;
     }
-    for (const t of txns) {
-      const row = txnToRow(subscriptionId, t);
-      if (!row) continue;
-      const key = row.transactionId || row.id;
-      byTxn.set(key, row);
-    }
+    // First ≥ $5 COMPLETED only — undercounts double recoveries on purpose.
+    const first = firstVerifiedRecoveryTxn(txns);
+    if (!first) continue;
+    const row = txnToRow(subscriptionId, first);
+    if (!row) continue;
+    bySub.set(subscriptionId, row);
   }
-  return [...byTxn.values()].sort((a, b) =>
+  return [...bySub.values()].sort((a, b) =>
     a.recoveredAt < b.recoveredAt ? 1 : a.recoveredAt > b.recoveredAt ? -1 : 0
   );
 }
@@ -110,7 +115,7 @@ function sessionRows(): RecoveredMrrRow[] {
   return g.__renewalRescueRecoveredSession;
 }
 
-/** Live PayPal txns + same-instance Approve appends (deduped by txn id). */
+/** Live PayPal first-$5 rows + same-instance Approve pendings (deduped). */
 export async function listRecoveredMrr(): Promise<RecoveredMrrRow[]> {
   const fromPaypal = await listRecoveredMrrFromPaypal();
   const byKey = new Map<string, RecoveredMrrRow>();
@@ -119,15 +124,25 @@ export async function listRecoveredMrr(): Promise<RecoveredMrrRow[]> {
   }
   for (const r of sessionRows()) {
     const key = r.transactionId || r.proposalId || r.id;
-    if (!byKey.has(key)) byKey.set(key, r);
+    if (!byKey.has(key)) byKey.set(key, { ...r, pending: true });
   }
   return [...byKey.values()].sort((a, b) =>
     a.recoveredAt < b.recoveredAt ? 1 : a.recoveredAt > b.recoveredAt ? -1 : 0
   );
 }
 
+/** Verified total only — excludes Recovery pending / desk_approve overlays. */
+export function isVerifiedRecoveryRow(row: {
+  source?: string;
+  pending?: boolean;
+}): boolean {
+  if (row.pending) return false;
+  return row.source === "paypal_transactions";
+}
+
 export function sumRecoveredUsd(rows: RecoveredMrrRow[]): number {
   return rows.reduce((acc, r) => {
+    if (!isVerifiedRecoveryRow(r)) return acc;
     if (r.amountRecovered.currency_code !== "USD") return acc;
     const n = Number(r.amountRecovered.value);
     return Number.isFinite(n) ? acc + n : acc;
@@ -161,8 +176,8 @@ export type AppendRecoveredInput = {
 };
 
 /**
- * Session append after verified capture (outstanding cleared).
- * Prefer live txn list as source of truth on next refresh.
+ * Session append after cleared capture — Recovery pending until the live
+ * txn list confirms the first COMPLETED ≥ $5. Prefer live list on Refresh.
  */
 export function appendVerifiedRecovery(
   input: AppendRecoveredInput
@@ -185,22 +200,29 @@ export function appendVerifiedRecovery(
     if (existing) return existing;
   }
 
+  const amountValue = Number.parseFloat(input.amount.value);
   const row: RecoveredMrrRow = {
     id: `desk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     subscriptionId: input.subscriptionId,
     pathKey: input.pathKey,
     recoveryAction: "capture_outstanding",
-    amountRecovered: input.amount,
+    amountRecovered: {
+      currency_code: input.amount.currency_code,
+      value: Number.isFinite(amountValue)
+        ? amountValue.toFixed(2)
+        : input.amount.value,
+    },
     deskStatus: "RECOVERED",
     transactionId: txnId,
     transactionStatus: txnStatus || "COMPLETED",
     recoveredAt: new Date().toISOString(),
     outstandingCleared: true,
     source: "desk_approve",
+    pending: true,
     proposalId: input.proposalId,
     note:
       input.note ||
-      "Appended after Approve RECOVERED with outstanding cleared (verified).",
+      "Recovery pending — Approve cleared outstanding; awaiting PayPal txn list confirmation.",
   };
 
   rows.unshift(row);

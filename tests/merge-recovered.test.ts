@@ -4,6 +4,7 @@ import {
   coerceRecoveredBoardRow,
   mergeRecoveredBoard,
   recoveredRowDedupeKey,
+  recoveryBoardSourceLabel,
   serverHasRecovery,
   sumRecoveredBoardUsd,
   upsertOptimisticRecovered,
@@ -25,6 +26,7 @@ function row(
     transactionStatus: partial.transactionStatus ?? "COMPLETED",
     recoveredAt: partial.recoveredAt || "2026-11-03T12:00:00.000Z",
     source: partial.source || "desk_approve",
+    pending: partial.pending,
     proposalId: partial.proposalId,
     note: partial.note,
     id: partial.id,
@@ -33,20 +35,23 @@ function row(
 }
 
 describe("mergeRecoveredBoard (optimistic desk overlay)", () => {
-  it("shows RECOVERED Approve row before PayPal board updates", () => {
+  it("shows Recovery pending Approve row before PayPal board updates", () => {
     const optimistic = row({
       id: "desk_approve_1",
       subscriptionId: "I-3FSFGWWRAV4D",
       proposalId: "prop_abc",
       transactionId: "TXNWAIT01",
       source: "desk_approve",
+      pending: true,
       amountRecovered: { currency_code: "USD", value: "5.00" },
     });
 
     const merged = mergeRecoveredBoard([], [optimistic]);
     assert.equal(merged.length, 1);
     assert.equal(merged[0].id, "desk_approve_1");
-    assert.equal(sumRecoveredBoardUsd(merged), 5);
+    // Pending excluded from verified total
+    assert.equal(sumRecoveredBoardUsd(merged), 0);
+    assert.equal(recoveryBoardSourceLabel(merged[0]), "Recovery pending");
   });
 
   it("keeps optimistic row when server returns empty (lambda lag)", () => {
@@ -66,19 +71,20 @@ describe("mergeRecoveredBoard (optimistic desk overlay)", () => {
         proposalId: "prop_new",
         transactionId: "NEWTXN99",
         source: "desk_approve",
+        pending: true,
         recoveredAt: "2026-11-03T15:00:00.000Z",
       }),
     ];
-    // First paint with approve row present
+    // First paint with approve row present — verified total stays at paypal only
     let board = mergeRecoveredBoard(existing, optimistic);
     assert.equal(board.length, 2);
-    assert.equal(sumRecoveredBoardUsd(board), 10);
+    assert.equal(sumRecoveredBoardUsd(board), 5);
 
     // Lag: GET returns empty / missing the new txn — do not wipe optimistic
     board = mergeRecoveredBoard([], optimistic);
     assert.equal(board.length, 1);
     assert.equal(board[0].id, "desk_new");
-    assert.equal(sumRecoveredBoardUsd(board), 5);
+    assert.equal(sumRecoveredBoardUsd(board), 0);
   });
 
   it("dedupes when PayPal later returns the same txn id", () => {
@@ -88,6 +94,7 @@ describe("mergeRecoveredBoard (optimistic desk overlay)", () => {
       proposalId: "prop_abc",
       transactionId: "TXNWAIT01",
       source: "desk_approve",
+      pending: true,
     });
     const server = row({
       id: "paypal_TXNWAIT01",
@@ -100,6 +107,7 @@ describe("mergeRecoveredBoard (optimistic desk overlay)", () => {
     assert.equal(merged.length, 1);
     assert.equal(merged[0].source, "paypal_transactions");
     assert.equal(merged[0].id, "paypal_TXNWAIT01");
+    assert.equal(sumRecoveredBoardUsd(merged), 5);
   });
 
   it("dedupes by proposalId when txn id still null on Approve", () => {
@@ -109,6 +117,7 @@ describe("mergeRecoveredBoard (optimistic desk overlay)", () => {
       proposalId: "prop_xyz",
       transactionId: null,
       source: "desk_approve",
+      pending: true,
     });
     const server = row({
       id: "desk_1",
@@ -116,6 +125,7 @@ describe("mergeRecoveredBoard (optimistic desk overlay)", () => {
       proposalId: "prop_xyz",
       transactionId: "LATER123",
       source: "desk_approve",
+      pending: true,
     });
     const merged = mergeRecoveredBoard([server], [optimistic]);
     assert.equal(merged.length, 1);
@@ -134,7 +144,7 @@ describe("mergeRecoveredBoard (optimistic desk overlay)", () => {
     assert.equal(twice.length, 1);
   });
 
-  it("coerceRecoveredBoardRow accepts Approve recovered payload", () => {
+  it("coerceRecoveredBoardRow accepts Approve recovered payload as pending", () => {
     const coerced = coerceRecoveredBoardRow({
       id: "desk_x",
       subscriptionId: "I-3FSFGWWRAV4D",
@@ -147,10 +157,12 @@ describe("mergeRecoveredBoard (optimistic desk overlay)", () => {
     });
     assert.ok(coerced);
     assert.equal(recoveredRowDedupeKey(coerced!), "txn:ABC");
+    assert.equal(coerced!.pending, true);
     assert.equal(
       serverHasRecovery([coerced!], { transactionId: "ABC" }),
       true
     );
+    assert.equal(sumRecoveredBoardUsd([coerced!]), 0);
   });
 
   it("coerceRecoveredBoardRow rejects junk", () => {

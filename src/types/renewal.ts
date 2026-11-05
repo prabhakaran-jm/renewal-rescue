@@ -28,9 +28,12 @@ export type RenewalProposal = {
   rationale: string;
   proposedPlanId?: string;
   proposedPrice?: Money;
-  /** Capture amount (≤ outstanding) or retained MRR estimate */
+  /** Capture amount (≤ outstanding) or retained recovery estimate */
   impact?: Money;
-  /** True when outstanding is $0 — not verified recovery */
+  /**
+   * True only for demo/$0 rows with no first COMPLETED ≥ $5 recovery txn.
+   * Not inferred from outstanding alone when a verified recovery exists.
+   */
   fixtureLabeled?: boolean;
 };
 
@@ -62,5 +65,9 @@ export type DeskSubscription = {
   refreshedAt: string;
   preferredCaptureTarget: boolean;
   fixtureLabeled: boolean;
+  /** Desk badge: Outstanding / Fixture / Balance recovered… / Subscription restored */
+  cardLabel?: string;
+  /** True when live txn list has a first COMPLETED USD ≥ $5 recovery. */
+  hasVerifiedRecovery?: boolean;
   currentPlanPrice: Money;
 };

@@ -1,8 +1,35 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isRecoveredTransaction } from "../src/lib/desk/recovered-mrr.ts";
+import {
+  firstVerifiedRecoveryTxn,
+  isRecoveredTransaction,
+  isVerifiedRecoveryRow,
+  sumRecoveredUsd,
+  type RecoveredMrrRow,
+} from "../src/lib/desk/recovered-mrr.ts";
+import type { PaypalSubscriptionTransaction } from "../src/lib/paypal/billing.ts";
 
-describe("recovered MRR txn rule (probe-informed)", () => {
+const money = (value: string) => ({ currency_code: "USD", value });
+
+function txn(
+  partial: Partial<PaypalSubscriptionTransaction> & {
+    id: string;
+    status?: string;
+    value?: string;
+    time?: string;
+  }
+): PaypalSubscriptionTransaction {
+  return {
+    id: partial.id,
+    status: partial.status ?? "COMPLETED",
+    time: partial.time ?? "2026-10-31T12:00:00.000Z",
+    amount_with_breakdown: {
+      gross_amount: money(partial.value ?? "5.00"),
+    },
+  };
+}
+
+describe("recovered txn rule (probe-informed)", () => {
   it("counts COMPLETED $5 capture", () => {
     assert.equal(
       isRecoveredTransaction({
@@ -55,5 +82,81 @@ describe("recovered MRR txn rule (probe-informed)", () => {
       }),
       false
     );
+  });
+});
+
+describe("first-$5 verified recovery attribution", () => {
+  it("picks the earliest COMPLETED ≥ $5 (undercounts later doubles)", () => {
+    const first = firstVerifiedRecoveryTxn([
+      txn({
+        id: "SETUP",
+        value: "1.00",
+        time: "2026-10-30T10:00:00.000Z",
+      }),
+      txn({
+        id: "SECOND",
+        value: "5.00",
+        time: "2026-11-02T12:00:00.000Z",
+      }),
+      txn({
+        id: "FIRST",
+        value: "6.00",
+        time: "2026-10-31T12:00:00.000Z",
+      }),
+    ]);
+    assert.equal(first?.id, "FIRST");
+  });
+
+  it("returns null when only setup-fee COMPLETED exists", () => {
+    assert.equal(
+      firstVerifiedRecoveryTxn([
+        txn({ id: "SETUP", value: "1.00", time: "2026-10-30T10:00:00.000Z" }),
+      ]),
+      null
+    );
+  });
+});
+
+describe("verified total excludes Recovery pending", () => {
+  const verified: RecoveredMrrRow = {
+    id: "paypal_FIRST",
+    subscriptionId: "I-AAA",
+    recoveryAction: "capture_outstanding",
+    amountRecovered: money("5.00"),
+    deskStatus: "RECOVERED",
+    transactionId: "FIRST",
+    transactionStatus: "COMPLETED",
+    recoveredAt: "2026-10-31T12:00:00.000Z",
+    outstandingCleared: true,
+    source: "paypal_transactions",
+    pending: false,
+  };
+
+  const pending: RecoveredMrrRow = {
+    id: "desk_1",
+    subscriptionId: "I-BBB",
+    recoveryAction: "capture_outstanding",
+    amountRecovered: money("6.00"),
+    deskStatus: "RECOVERED",
+    transactionId: null,
+    transactionStatus: "COMPLETED",
+    recoveredAt: "2026-11-05T12:00:00.000Z",
+    outstandingCleared: true,
+    source: "desk_approve",
+    pending: true,
+  };
+
+  it("isVerifiedRecoveryRow rejects desk_approve / pending", () => {
+    assert.equal(isVerifiedRecoveryRow(verified), true);
+    assert.equal(isVerifiedRecoveryRow(pending), false);
+    assert.equal(
+      isVerifiedRecoveryRow({ source: "desk_approve", pending: false }),
+      false
+    );
+  });
+
+  it("sumRecoveredUsd excludes pending from verified total", () => {
+    assert.equal(sumRecoveredUsd([verified, pending]), 5);
+    assert.equal(sumRecoveredUsd([pending]), 0);
   });
 });
