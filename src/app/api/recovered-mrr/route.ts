@@ -8,8 +8,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Recovered-MRR board — live PayPal transactions (COMPLETED gross ≥ $5).
- * Probe-informed: I-J8R13K0F76X4 → one $5 row (setup fee $1 excluded).
+ * Verified balance-recovery board — first COMPLETED USD ≥ $5 per subscription
+ * from the live txn list (recomputed each call). Setup-fee $1 excluded.
+ * Optimistic / desk_approve rows may appear as Recovery pending and are
+ * excluded from totalUsd.
  */
 export async function GET() {
   try {
@@ -17,9 +19,10 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       totalUsd: sumRecoveredUsd(rows),
-      count: rows.length,
+      count: rows.filter((r) => r.source === "paypal_transactions" && !r.pending)
+        .length,
       rows,
-      note: "Live subscription transactions: COMPLETED USD gross ≥ $5 only. Setup-fee $1 excluded. Failures are not listed as txn status=FAILED.",
+      note: "Verified balance recovery: first COMPLETED USD ≥ $5 per subscription from live txn list. Undercounts double recoveries. Recovery-pending / desk_approve rows excluded from totalUsd.",
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

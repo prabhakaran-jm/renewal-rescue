@@ -29,12 +29,18 @@ export async function POST(req: Request) {
       );
     }
 
-    const { proposal, policy, ai, customerMessage } =
-      await proposeForSubscription(sub, {
-        demoWriteOff: Boolean(body.demoWriteOff),
-        forceRevise: Boolean(body.forceRevise),
-        forceCapture: Boolean(body.forceCapture),
-      });
+    const {
+      proposal,
+      policy,
+      ai,
+      customerMessage,
+      hideCustomerDraft,
+      ruleWarning,
+    } = await proposeForSubscription(sub, {
+      demoWriteOff: Boolean(body.demoWriteOff),
+      forceRevise: Boolean(body.forceRevise),
+      forceCapture: Boolean(body.forceCapture),
+    });
     const stored = saveProposal(proposal, policy);
 
     return NextResponse.json({
@@ -49,11 +55,15 @@ export async function POST(req: Request) {
         outstanding: sub.outstanding,
         preferredCaptureTarget: sub.preferredCaptureTarget,
         fixtureLabeled: sub.fixtureLabeled,
+        cardLabel: sub.cardLabel,
+        hasVerifiedRecovery: sub.hasVerifiedRecovery,
       },
       proposal: stored.proposal,
       policy: stored.policy,
       ai,
-      customerMessage: customerMessage ?? null,
+      customerMessage: hideCustomerDraft ? null : customerMessage ?? null,
+      hideCustomerDraft: Boolean(hideCustomerDraft),
+      ruleWarning: ruleWarning ?? null,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

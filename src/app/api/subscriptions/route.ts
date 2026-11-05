@@ -14,7 +14,7 @@ export async function GET() {
     return NextResponse.json({
       preferredCaptureId: preferredCaptureId(),
       count: subscriptions.length,
-      note: "Live Billing GET. Webhooks Simulator is never money proof. FIXTURE when outstanding is $0.",
+      note: "Live Billing GET. Webhooks Simulator is never money proof. Fixture only when outstanding is $0 and no first COMPLETED ≥ $5 recovery txn.",
       subscriptions,
     });
   } catch (err) {

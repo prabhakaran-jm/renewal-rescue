@@ -1,10 +1,11 @@
 /**
- * Client-side recovered-MRR board merge.
+ * Client-side verified balance-recovery board merge.
  *
- * Approve returns a verified row, but GET /api/recovered-mrr only sees live
- * PayPal COMPLETED ≥ $5 and can lag across Vercel lambdas (session memory
- * does not cross instances). Keep Approve rows as an optimistic overlay until
- * PayPal returns the same txn / proposal / id.
+ * Approve returns a Recovery-pending row; GET /api/recovered-mrr only counts
+ * the first live PayPal COMPLETED ≥ $5 per sub as verified and can lag across
+ * Vercel lambdas (session memory does not cross instances). Keep Approve rows
+ * as an optimistic overlay until PayPal returns the same txn / proposal / id.
+ * Pending overlays are excluded from the verified total.
  */
 
 export type RecoveredBoardMoney = { currency_code: string; value: string };
@@ -18,6 +19,7 @@ export type RecoveredBoardRow = {
   transactionStatus: string | null;
   recoveredAt: string;
   source: string;
+  pending?: boolean;
   proposalId?: string;
   note?: string;
 };
@@ -80,12 +82,33 @@ export function mergeRecoveredBoard(
   return sortNewestFirst([...byKey.values()]);
 }
 
+/** Verified total — excludes Recovery pending / desk_approve overlays. */
+export function isVerifiedBoardRow(row: {
+  source?: string;
+  pending?: boolean;
+}): boolean {
+  if (row.pending) return false;
+  if (row.source === "desk_approve") return false;
+  return row.source === "paypal_transactions";
+}
+
 export function sumRecoveredBoardUsd(rows: RecoveredBoardRow[]): number {
   return rows.reduce((acc, r) => {
+    if (!isVerifiedBoardRow(r)) return acc;
     if (r.amountRecovered.currency_code !== "USD") return acc;
     const n = Number(r.amountRecovered.value);
     return Number.isFinite(n) ? acc + n : acc;
   }, 0);
+}
+
+/** Board source badge: verified vs Recovery pending. */
+export function recoveryBoardSourceLabel(row: {
+  source?: string;
+  pending?: boolean;
+}): string {
+  if (row.pending || row.source === "desk_approve") return "Recovery pending";
+  if (row.source === "paypal_transactions") return "Verified";
+  return row.source || "unknown";
 }
 
 /** Upsert one optimistic row (dedupe by txn / proposal / id). */
@@ -117,13 +140,14 @@ export function coerceRecoveredBoardRow(
   if (typeof r.id !== "string" || typeof r.subscriptionId !== "string") {
     return null;
   }
+  const amountNum = Number.parseFloat(money.value);
   return {
     id: r.id,
     subscriptionId: r.subscriptionId,
     pathKey: typeof r.pathKey === "string" ? r.pathKey : undefined,
     amountRecovered: {
       currency_code: money.currency_code,
-      value: money.value,
+      value: Number.isFinite(amountNum) ? amountNum.toFixed(2) : money.value,
     },
     transactionId:
       typeof r.transactionId === "string" ? r.transactionId : null,
@@ -134,6 +158,11 @@ export function coerceRecoveredBoardRow(
         ? r.recoveredAt
         : new Date().toISOString(),
     source: typeof r.source === "string" ? r.source : "desk_approve",
+    pending:
+      typeof r.pending === "boolean"
+        ? r.pending
+        : (typeof r.source === "string" ? r.source : "desk_approve") ===
+          "desk_approve",
     proposalId: typeof r.proposalId === "string" ? r.proposalId : undefined,
     note: typeof r.note === "string" ? r.note : undefined,
   };

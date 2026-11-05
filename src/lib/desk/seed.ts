@@ -1,6 +1,11 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { getSubscription } from "@/lib/paypal/billing";
+import { deskCardBadge } from "@/lib/desk/card-labels";
+import { hasFirstVerifiedRecovery } from "@/lib/desk/recovery-txn";
+import {
+  getSubscription,
+  listSubscriptionTransactions,
+} from "@/lib/paypal/billing";
 import type { DeskSubscription, Money } from "@/types/renewal";
 
 const DEFAULT_PLAN_PRICE: Money = { currency_code: "USD", value: "5.00" };
@@ -70,7 +75,7 @@ const KNOWN_SEED_META: Record<
   "I-J8R13K0F76X4": {
     planKey: "setupFee",
     failurePath: "setup-fee-continue",
-    note: "Money-proof history — MRR board; not preferred capture",
+    note: "Money-proof history — verified balance recovery board; not preferred capture",
   },
 };
 
@@ -164,8 +169,9 @@ export function resolveSeedSubscriptionEntries(): Array<{
 }
 
 /**
- * Money-proof history + cleared film + smoke — always probe for recovered-MRR
- * even when SEED_SUBSCRIPTION_IDS is trimmed (Vercel env lag / judge spares only).
+ * Money-proof history + cleared film + smoke — always probe for verified
+ * balance recovery even when SEED_SUBSCRIPTION_IDS is trimmed
+ * (Vercel env lag / judge spares only).
  */
 export const ALWAYS_PROBE_RECOVERED_MRR_IDS = [
   "I-J8R13K0F76X4", // money-proof history
@@ -173,7 +179,7 @@ export const ALWAYS_PROBE_RECOVERED_MRR_IDS = [
   "I-3FSFGWWRAV4D", // smoke
 ] as const;
 
-/** IDs to probe for recovered-MRR (env/fixture list ∪ always-probe money-proof ids). */
+/** IDs to probe for verified recovery (env/fixture list ∪ always-probe ids). */
 export function recoveredMrrSubscriptionIds(): string[] {
   const envIds = parseEnvSubscriptionIds();
   const base = envIds.length
@@ -212,9 +218,34 @@ export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
       throw err;
     }
     const outstanding = live.billing_info?.outstanding_balance ?? null;
-    const outstandingValue = outstanding
+    const outstandingRaw = outstanding
       ? Number.parseFloat(outstanding.value)
       : 0;
+    const outstandingValue = Number.isFinite(outstandingRaw)
+      ? outstandingRaw
+      : 0;
+
+    // First COMPLETED ≥ $5 → not a fixture even when outstanding is $0.
+    let hasVerifiedRecovery = false;
+    try {
+      const txns = await listSubscriptionTransactions(live.id);
+      hasVerifiedRecovery = hasFirstVerifiedRecovery(txns);
+    } catch {
+      hasVerifiedRecovery = false;
+    }
+
+    const badge = deskCardBadge({
+      outstandingValue,
+      status: live.status,
+      hasVerifiedRecovery,
+    });
+
+    const outstandingNormalized = outstanding
+      ? {
+          currency_code: outstanding.currency_code || "USD",
+          value: outstandingValue.toFixed(2),
+        }
+      : null;
 
     rows.push({
       key,
@@ -224,16 +255,16 @@ export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
       failurePath: row.failurePath || key,
       note: row.note || "",
       status: live.status,
-      outstanding,
-      outstandingValue: Number.isFinite(outstandingValue)
-        ? outstandingValue
-        : 0,
+      outstanding: outstandingNormalized,
+      outstandingValue,
       failedPaymentsCount: live.billing_info?.failed_payments_count ?? null,
       nextBillingTime: live.billing_info?.next_billing_time ?? null,
       lastPayment: live.billing_info?.last_payment ?? null,
       refreshedAt,
       preferredCaptureTarget: live.id === preferredCaptureIdFromEnv(),
-      fixtureLabeled: !(outstandingValue > 0),
+      fixtureLabeled: badge.fixtureLabeled,
+      cardLabel: badge.label,
+      hasVerifiedRecovery,
       currentPlanPrice: DEFAULT_PLAN_PRICE,
     });
   }

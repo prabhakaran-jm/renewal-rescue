@@ -6,9 +6,11 @@ import {
   noMoneyApproveMessage,
   shouldShowCaptureNow,
 } from "@/lib/desk/approve-copy";
+import { formatDeskAmount } from "@/lib/desk/card-labels";
 import {
   coerceRecoveredBoardRow,
   mergeRecoveredBoard,
+  recoveryBoardSourceLabel,
   serverHasRecovery,
   sumRecoveredBoardUsd,
   upsertOptimisticRecovered,
@@ -26,6 +28,8 @@ type DeskSub = {
   failurePath: string;
   preferredCaptureTarget: boolean;
   fixtureLabeled: boolean;
+  cardLabel?: string;
+  hasVerifiedRecovery?: boolean;
   failedPaymentsCount: number | null;
   refreshedAt: string;
 };
@@ -48,12 +52,16 @@ type ProposalPayload = {
     reason?: string;
   };
   customerMessage?: string | null;
+  hideCustomerDraft?: boolean;
+  ruleWarning?: string | null;
   subscription?: {
     id: string;
     status: string;
     outstanding: Money | null;
     preferredCaptureTarget?: boolean;
     fixtureLabeled?: boolean;
+    cardLabel?: string;
+    hasVerifiedRecovery?: boolean;
   };
 };
 
@@ -496,6 +504,7 @@ export function RecoveryDesk() {
   const showCaptureNow = shouldShowCaptureNow({
     outstandingValue: selectedSub?.outstandingValue ?? 0,
     proposalAction: proposal?.proposal.action,
+    policyOk: Boolean(proposal?.policy.ok),
   });
   const captureHint =
     showCaptureNow && proposal
@@ -512,16 +521,20 @@ export function RecoveryDesk() {
 
   const visibleSubs = showFixtures
     ? subs
-    : subs.filter((s) => !(s.fixtureLabeled || s.outstandingValue <= 0));
+    : subs.filter(
+        (s) =>
+          !(s.fixtureLabeled || (s.outstandingValue <= 0 && !s.hasVerifiedRecovery))
+      );
 
   return (
     <main className="desk">
       <header className="brand-block">
         <h1 className="brand">Renewal Rescue</h1>
         <p className="lede">
-          Recover failed subscription renewals — propose with AI, gate with
+          Recover failed subscription payments — propose with AI, gate with
           policy, approve as the merchant. Capture only when outstanding is
-          live; never auto-capture.
+          live; never auto-capture. Sandbox seeds use a drained-funding
+          recurring charge failure (setup-fee path), not Webhooks Simulator.
         </p>
       </header>
 
@@ -602,8 +615,21 @@ export function RecoveryDesk() {
                       {s.preferredCaptureTarget ? (
                         <span className="badge quiet-live">Preferred</span>
                       ) : null}
-                      {s.outstandingValue > 0 ? (
-                        <span className="badge quiet-live">Outstanding</span>
+                      {s.fixtureLabeled ? (
+                        <span className="badge quiet-fixture">
+                          {s.cardLabel || "Fixture"}
+                        </span>
+                      ) : s.hasVerifiedRecovery ? (
+                        <span className="badge quiet-live">
+                          {s.cardLabel ||
+                            (s.status === "ACTIVE"
+                              ? "Subscription restored"
+                              : "Balance recovered, reactivation pending")}
+                        </span>
+                      ) : s.outstandingValue > 0 ? (
+                        <span className="badge quiet-live">
+                          {s.cardLabel || "Outstanding"}
+                        </span>
                       ) : (
                         <span className="badge quiet-fixture">Fixture</span>
                       )}
@@ -617,9 +643,10 @@ export function RecoveryDesk() {
                       <div>
                         <span className="label">Outstanding</span>
                         <strong>
-                          {s.outstanding
-                            ? `${s.outstanding.value} ${s.outstanding.currency_code}`
-                            : "0"}
+                          {formatDeskAmount(
+                            s.outstandingValue,
+                            s.outstanding?.currency_code || "USD"
+                          )}
                         </strong>
                       </div>
                       <div>
@@ -682,12 +709,25 @@ export function RecoveryDesk() {
                 </>
               )}
             </div>
-            <p className="customer-draft">
-              <em>Customer draft</em>
-              {proposal.customerMessage?.trim()
-                ? proposal.customerMessage
-                : "No customer draft from this propose path."}
-            </p>
+            {proposal.hideCustomerDraft ||
+            proposal.ruleWarning ||
+            (aiIsRule &&
+              proposal.ai?.reason?.includes("SUSPENDED")) ? (
+              <p className="customer-draft" role="status">
+                <em>RULE</em>
+                {proposal.ruleWarning ||
+                  proposal.ai?.reason ||
+                  "PayPal will not auto-retry while SUSPENDED. Capture now or escalate."}
+                <span className="muted"> — customer draft hidden</span>
+              </p>
+            ) : (
+              <p className="customer-draft">
+                <em>Customer draft</em>
+                {proposal.customerMessage?.trim()
+                  ? proposal.customerMessage
+                  : "No customer draft from this propose path."}
+              </p>
+            )}
           </div>
 
           <div className="proposal-meta">
@@ -770,11 +810,29 @@ export function RecoveryDesk() {
           ) : null}
           {isRecovered ? (
             <div className="result-banner ok" role="status">
-              <strong>Recovered</strong>
+              <strong>Balance recovered</strong>
               <span>
-                Outstanding cleared
-                {approveResult.activate ? "; subscription activate attempted" : ""}
-                .
+                {(() => {
+                  const act = approveResult.activate as
+                    | {
+                        restored?: boolean;
+                        reactivationPending?: boolean;
+                        status?: string | null;
+                        paypalErrorName?: string;
+                      }
+                    | undefined;
+                  if (act?.restored) {
+                    return "Outstanding cleared; subscription restored (ACTIVE).";
+                  }
+                  if (act?.reactivationPending) {
+                    return `Outstanding cleared; reactivation pending${
+                      act.status ? ` (${act.status})` : ""
+                    }${
+                      act.paypalErrorName ? ` — ${act.paypalErrorName}` : ""
+                    }.`;
+                  }
+                  return "Outstanding cleared; recovery pending verification on the board.";
+                })()}
               </span>
             </div>
           ) : null}
@@ -802,14 +860,15 @@ export function RecoveryDesk() {
 
       <section className="section" aria-labelledby="mrr-heading">
         <div className="section-head">
-          <h2 id="mrr-heading">Recovered MRR</h2>
+          <h2 id="mrr-heading">Verified balance recovery</h2>
           <span className={`mrr-total${mrrPulse ? " pulse" : ""}`}>
             ${recoveredTotal.toFixed(2)} USD
           </span>
         </div>
         <p className="hint" style={{ marginBottom: "0.65rem" }}>
-          Verified PayPal recoveries only — outstanding cleared after Approve.
-          Approve rows stay visible until PayPal txn list catches up.
+          First COMPLETED PayPal payment ≥ $5.00 per subscription (live txn
+          list). Recovery-pending Approve rows stay visible but are excluded
+          from the verified total until PayPal confirms.
         </p>
         <div className="board">
           {recovered.length === 0 ? (
@@ -841,7 +900,9 @@ export function RecoveryDesk() {
                       </td>
                       <td>
                         <strong>
-                          {r.amountRecovered.value}{" "}
+                          {Number.parseFloat(r.amountRecovered.value).toFixed(
+                            2
+                          )}{" "}
                           {r.amountRecovered.currency_code}
                         </strong>
                       </td>
@@ -853,7 +914,15 @@ export function RecoveryDesk() {
                         )}
                       </td>
                       <td>
-                        <span className="badge quiet-live">{r.source}</span>
+                        <span
+                          className={
+                            r.pending || r.source === "desk_approve"
+                              ? "badge quiet-status"
+                              : "badge quiet-live"
+                          }
+                        >
+                          {recoveryBoardSourceLabel(r)}
+                        </span>
                       </td>
                     </tr>
                   ))}

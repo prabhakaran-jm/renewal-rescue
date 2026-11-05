@@ -54,6 +54,17 @@ describe("approve-copy", () => {
     );
   });
 
+  it("shouldShowCaptureNow hidden when policy blocked", () => {
+    assert.equal(
+      shouldShowCaptureNow({
+        outstandingValue: 5,
+        proposalAction: "escalate",
+        policyOk: false,
+      }),
+      false
+    );
+  });
+
   it("shouldShowCaptureNow hidden for capture_outstanding or $0", () => {
     assert.equal(
       shouldShowCaptureNow({

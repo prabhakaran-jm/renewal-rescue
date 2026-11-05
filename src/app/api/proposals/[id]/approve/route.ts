@@ -49,13 +49,20 @@ async function finalizeClearedCapture(opts: {
   outstandingAfter: Money | null;
 }) {
   const activate = await activateAfterCaptureAction(opts.subId);
+  const activateNote = activate.restored
+    ? "subscription restored (GET ACTIVE)"
+    : activate.reactivationPending
+      ? `reactivation pending (GET ${activate.status || "unknown"}${
+          activate.paypalErrorName ? `; ${activate.paypalErrorName}` : ""
+        })`
+      : "activate checked";
   const recoveredRow = appendVerifiedRecovery({
     subscriptionId: opts.subId,
     pathKey: opts.pathKey,
     amount: opts.amount,
     paypal: opts.paypal,
     proposalId: opts.shortId,
-    note: `Approve RECOVERED on ${opts.subId}; outstanding cleared; activate ${activate.ok ? "ok" : "failed"}.`,
+    note: `Approve RECOVERED on ${opts.subId}; outstanding cleared; ${activateNote}. Recovery pending until live txn list confirms first COMPLETED ≥ $5.`,
   });
   const next = updateProposal(opts.token, {
     status: "APPROVED",

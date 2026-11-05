@@ -49,7 +49,31 @@ export type ProposeResult = {
   policy: PolicyResult;
   ai: AiProvenance;
   customerMessage?: string;
+  /**
+   * Honesty overlay when Gemini picked retry_later on a SUSPENDED sub:
+   * PayPal will not auto-retry while SUSPENDED — hide customer draft.
+   */
+  hideCustomerDraft?: boolean;
+  ruleWarning?: string;
 };
+
+/**
+ * PayPal does not schedule automatic payment retries while a subscription is
+ * SUSPENDED. Merchant must Capture outstanding (or revise / escalate) and
+ * reactivate after balance clears.
+ * @see https://developer.paypal.com/docs/subscriptions/manage/ (suspend /
+ * activate lifecycle — suspended subscriptions do not bill until activated)
+ */
+export const SUSPENDED_RETRY_LATER_WARNING =
+  "PayPal will not auto-retry while SUSPENDED — does not schedule a PayPal payment. Capture now or escalate.";
+
+/** True when we overlay RULE honesty for Gemini retry_later on SUSPENDED. */
+export function isSuspendedRetryLaterHonesty(
+  action: string,
+  status: string
+): boolean {
+  return action === "retry_later" && status === "SUSPENDED";
+}
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MODEL = "gemini-3.1-flash-lite";
@@ -269,6 +293,12 @@ function buildFromModelAction(
 export function buildPrompt(sub: DeskSubscription): string {
   const outstanding = sub.outstandingValue;
   const currency = sub.outstanding?.currency_code || "USD";
+  // Docs: suspended subs do not auto-retry billing until activated —
+  // https://developer.paypal.com/docs/subscriptions/manage/
+  const suspendedNote =
+    sub.status === "SUSPENDED"
+      ? "Note: status is SUSPENDED — PayPal will not auto-retry payments until the subscription is activated again after outstanding is cleared. Prefer capture_outstanding when outstanding > 0; retry_later does not schedule a PayPal payment."
+      : null;
   return [
     "You are proposing a recovery action for a failed PayPal subscription renewal.",
     "Choose exactly one action: capture_outstanding | revise_cheaper | retry_later | escalate.",
@@ -280,9 +310,35 @@ export function buildPrompt(sub: DeskSubscription): string {
     `Outstanding: ${moneyDisplay(outstanding, currency)}`,
     `Failed payments count: ${sub.failedPaymentsCount ?? "unknown"}`,
     `Fixture labeled ($0): ${sub.fixtureLabeled ? "yes" : "no"}`,
+    ...(suspendedNote ? ["", suspendedNote] : []),
     "",
     "Return JSON only matching the schema.",
   ].join("\n");
+}
+
+/**
+ * Keep Gemini's retry_later action (no silent coerce). Overlay RULE warning
+ * and hide the customer draft — PayPal will not auto-retry while SUSPENDED.
+ */
+export function applySuspendedRetryLaterHonesty(
+  result: ProposeResult,
+  status: string
+): ProposeResult {
+  if (!isSuspendedRetryLaterHonesty(result.proposal.action, status)) {
+    return result;
+  }
+  return {
+    ...result,
+    // Keep Gemini action; RULE badge for honesty (not a silent action coerce).
+    ai: {
+      source: "rule",
+      model: result.ai.model || "",
+      reason: SUSPENDED_RETRY_LATER_WARNING,
+    },
+    customerMessage: undefined,
+    hideCustomerDraft: true,
+    ruleWarning: SUSPENDED_RETRY_LATER_WARNING,
+  };
 }
 
 async function proposeViaGemini(
@@ -397,12 +453,14 @@ async function proposeViaGemini(
       };
     }
 
-    return {
+    const geminiResult: ProposeResult = {
       proposal: finalProposal,
       policy,
       ai: { source: "gemini", model },
       customerMessage: customerMessage.trim().slice(0, 400),
     };
+    // A1: keep Gemini retry_later; RULE warning + hide draft on SUSPENDED.
+    return applySuspendedRetryLaterHonesty(geminiResult, sub.status);
   } catch (err) {
     const fb = proposeDeterministic(sub, opts);
     let reason = "gemini_error";

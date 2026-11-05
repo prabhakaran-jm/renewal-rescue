@@ -1,10 +1,12 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
+  applySuspendedRetryLaterHonesty,
   buildPrompt,
   clearProposeCache,
   proposeDeterministic,
   proposeForSubscription,
+  SUSPENDED_RETRY_LATER_WARNING,
 } from "../src/lib/ai/propose.ts";
 import type { DeskSubscription } from "../src/types/renewal.ts";
 
@@ -289,13 +291,59 @@ describe("proposeForSubscription with fake fetch", () => {
         { status: 200 }
       );
 
-    const r = await proposeForSubscription(makeSub(), {
+    // ACTIVE: keep Gemini badge (honesty overlay is SUSPENDED-only)
+    const r = await proposeForSubscription(makeSub({ status: "ACTIVE" }), {
       apiKey: "k",
       fetchImpl: fakeFetch,
       bypassCache: true,
     });
     assert.equal(r.proposal.action, "retry_later");
     assert.equal(r.ai.source, "gemini");
+  });
+
+  it("SUSPENDED + Gemini retry_later keeps action, RULE warning, hides draft", async () => {
+    const fakeFetch: typeof fetch = async () =>
+      new Response(
+        JSON.stringify(
+          geminiOkBody({
+            action: "retry_later",
+            rationale: "Wait for PayPal to auto-retry the failed renewal.",
+            customerMessage:
+              "We will automatically retry your payment shortly.",
+          })
+        ),
+        { status: 200 }
+      );
+
+    const r = await proposeForSubscription(makeSub({ status: "SUSPENDED" }), {
+      apiKey: "k",
+      fetchImpl: fakeFetch,
+      bypassCache: true,
+    });
+    assert.equal(r.proposal.action, "retry_later");
+    assert.equal(r.ai.source, "rule");
+    assert.equal(r.ai.reason, SUSPENDED_RETRY_LATER_WARNING);
+    assert.equal(r.hideCustomerDraft, true);
+    assert.equal(r.customerMessage, undefined);
+    assert.equal(r.ruleWarning, SUSPENDED_RETRY_LATER_WARNING);
+  });
+
+  it("applySuspendedRetryLaterHonesty does not coerce non-retry actions", () => {
+    const base = {
+      proposal: {
+        subscriptionId: "I-X",
+        action: "capture_outstanding" as const,
+        rationale: "Capture the live outstanding balance now for recovery.",
+        impact: money("5.00"),
+      },
+      policy: { ok: true as const },
+      ai: { source: "gemini" as const, model: "m" },
+      customerMessage: "Please settle your balance when you can today.",
+    };
+    const out = applySuspendedRetryLaterHonesty(base, "SUSPENDED");
+    assert.equal(out.ai.source, "gemini");
+    assert.equal(out.proposal.action, "capture_outstanding");
+    assert.equal(out.hideCustomerDraft, undefined);
   });
 
   it("outstanding > 0 + Gemini escalate survives (no silent coerce)", async () => {
