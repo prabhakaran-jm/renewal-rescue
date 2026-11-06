@@ -1,7 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { deskCardBadge } from "@/lib/desk/card-labels";
-import { correlatedCaptureTxnIds } from "@/lib/desk/recovery-session";
 import { hasFirstVerifiedRecovery } from "@/lib/desk/recovery-txn";
 import {
   getSubscription,
@@ -203,7 +202,6 @@ export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
   }
 
   const refreshedAt = new Date().toISOString();
-  const correlated = correlatedCaptureTxnIds();
   const preferredId = preferredCaptureIdFromEnv();
 
   const settled = await Promise.all(
@@ -228,11 +226,11 @@ export async function listDeskSubscriptions(): Promise<DeskSubscription[]> {
         ? outstandingRaw
         : 0;
 
-      // Verified recovery = audited allowlist or desk capture correlation.
+      // First COMPLETED ≥ $5 on live txn list → verified recovery (no memory).
       let hasVerifiedRecovery = false;
       try {
         const txns = await listSubscriptionTransactions(live.id);
-        hasVerifiedRecovery = hasFirstVerifiedRecovery(txns, correlated);
+        hasVerifiedRecovery = hasFirstVerifiedRecovery(txns);
       } catch {
         hasVerifiedRecovery = false;
       }

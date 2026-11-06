@@ -22,8 +22,6 @@ export type RecoveredBoardRow = {
   pending?: boolean;
   proposalId?: string;
   note?: string;
-  /** Honest attribution from server — verified vs completed payment. */
-  attribution?: "verified_recovery" | "completed_payment" | "pending" | string;
 };
 
 /** Dedupe key: transactionId → proposalId → id. */
@@ -57,9 +55,7 @@ function sortNewestFirst(rows: RecoveredBoardRow[]): RecoveredBoardRow[] {
 function isServerVerifiedForSub(row: RecoveredBoardRow): boolean {
   if (row.pending) return false;
   if (row.source === "desk_approve") return false;
-  if (row.source !== "paypal_transactions") return false;
-  if (row.attribution === "completed_payment") return false;
-  return true;
+  return row.source === "paypal_transactions";
 }
 
 /**
@@ -100,17 +96,14 @@ export function mergeRecoveredBoard(
   return sortNewestFirst([...byKey.values()]);
 }
 
-/** Verified total — excludes Recovery pending / desk_approve / completed_payment. */
+/** Verified total — excludes Recovery pending / desk_approve overlays. */
 export function isVerifiedBoardRow(row: {
   source?: string;
   pending?: boolean;
-  attribution?: string;
 }): boolean {
   if (row.pending) return false;
   if (row.source === "desk_approve") return false;
-  if (row.source !== "paypal_transactions") return false;
-  if (row.attribution === "completed_payment") return false;
-  return true;
+  return row.source === "paypal_transactions";
 }
 
 export function sumRecoveredBoardUsd(rows: RecoveredBoardRow[]): number {
@@ -122,16 +115,12 @@ export function sumRecoveredBoardUsd(rows: RecoveredBoardRow[]): number {
   }, 0);
 }
 
-/** Board source badge: verified vs completed payment vs Recovery pending. */
+/** Board source badge: verified vs Recovery pending. */
 export function recoveryBoardSourceLabel(row: {
   source?: string;
   pending?: boolean;
-  attribution?: string;
 }): string {
   if (row.pending || row.source === "desk_approve") return "Recovery pending";
-  if (row.attribution === "completed_payment") {
-    return "Completed subscription payment";
-  }
   if (row.source === "paypal_transactions") return "Verified";
   return row.source || "unknown";
 }
@@ -196,8 +185,6 @@ export function coerceRecoveredBoardRow(
     pending,
     proposalId: typeof r.proposalId === "string" ? r.proposalId : undefined,
     note: typeof r.note === "string" ? r.note : undefined,
-    attribution:
-      typeof r.attribution === "string" ? r.attribution : undefined,
   };
 }
 

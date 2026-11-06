@@ -866,10 +866,9 @@ export function RecoveryDesk() {
           </span>
         </div>
         <p className="hint" style={{ marginBottom: "0.65rem" }}>
-          Verified only for audited historical captures or desk Approve/capture
-          correlation (COMPLETED ≥ $5.00). Other qualifying payments show as
-          completed subscription payment. Recovery-pending Approve rows stay
-          visible but are excluded from the verified total.
+          First COMPLETED PayPal payment ≥ $5.00 per subscription (live txn
+          list). Recovery-pending Approve rows stay visible but are excluded
+          from the verified total until PayPal confirms.
         </p>
         <div className="board">
           {recovered.length === 0 ? (

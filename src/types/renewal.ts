@@ -67,7 +67,7 @@ export type DeskSubscription = {
   fixtureLabeled: boolean;
   /** Desk badge: Outstanding / Fixture / Balance recovered… / Subscription restored */
   cardLabel?: string;
-  /** True when live txn list has an audited/correlated verified recovery. */
+  /** True when live txn list has a first COMPLETED USD ≥ $5 recovery. */
   hasVerifiedRecovery?: boolean;
   currentPlanPrice: Money;
 };
