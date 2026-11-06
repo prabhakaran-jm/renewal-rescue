@@ -8,9 +8,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Verified balance-recovery board — COMPLETED USD ≥ $5 with audited allowlist
- * or desk capture correlation (recomputed each call). Setup-fee $1 excluded.
- * Uncorrelated qualifying payments are completed_payment (excluded from total).
+ * Verified balance-recovery board — first COMPLETED USD ≥ $5 per subscription
+ * from the live txn list (recomputed each call). Setup-fee $1 excluded.
  * Optimistic / desk_approve rows may appear as Recovery pending and are
  * excluded from totalUsd.
  */
@@ -20,14 +19,10 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       totalUsd: sumRecoveredUsd(rows),
-      count: rows.filter(
-        (r) =>
-          r.source === "paypal_transactions" &&
-          !r.pending &&
-          r.attribution !== "completed_payment"
-      ).length,
+      count: rows.filter((r) => r.source === "paypal_transactions" && !r.pending)
+        .length,
       rows,
-      note: "Verified balance recovery: audited historical txn allowlist or desk Approve/capture correlation. Uncorrelated COMPLETED ≥ $5 labeled completed subscription payment. Recovery-pending / desk_approve excluded from totalUsd.",
+      note: "Verified balance recovery: first COMPLETED USD ≥ $5 per subscription from live txn list. Undercounts double recoveries. Recovery-pending / desk_approve rows excluded from totalUsd.",
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
