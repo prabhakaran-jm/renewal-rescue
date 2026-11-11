@@ -1,9 +1,9 @@
 /**
- * Daily check through Nov 3 DECIDE.
+ * Daily outstanding / status snapshot for seeded shells.
  * Pulls each seeded subscription and reports outstanding_balance / status.
  *
  * Usage: npm run check:daily
- * Exit 0 always (informational). Prints DECIDE hint if any outstanding > 0.
+ * Exit 0 always (informational). Prints a readiness hint if any outstanding > 0.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -99,11 +99,11 @@ async function main() {
   console.log("─".repeat(72));
   if (anyOutstanding) {
     console.log(
-      "DECIDE hint: at least one outstanding_balance > 0 → build Renewal Rescue (Nov 3 rule)."
+      "At least one outstanding_balance > 0 — ready for capture/revise desk demos."
     );
   } else {
     console.log(
-      "No outstanding yet. Expected — PayPal retries ~every 5 days. Keep checking through Nov 3. Do NOT flip product on Oct 30."
+      "No outstanding yet. PayPal may retry over several days; keep checking. Do not treat Simulator events as money proof."
     );
   }
   console.log("Wrote", outPath);

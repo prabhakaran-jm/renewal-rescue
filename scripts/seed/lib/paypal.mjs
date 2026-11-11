@@ -1,5 +1,5 @@
 /**
- * Minimal PayPal sandbox REST helpers for Oct 30 seed scripts.
+ * Minimal PayPal sandbox REST helpers for seed scripts.
  * Never logs client secret or access tokens.
  */
 

@@ -41,5 +41,5 @@
   "checkDailyPostClearExcerpt": [
     "setup-fee-continue     I-J8R13K0F76X4  status=SUSPENDED  outstanding=0.0 USD  failed=0"
   ],
-  "relatedDailyCheckFile": "fixtures/daily-checks/2026-10-31.json"
+  "relatedDailyCheckFile": null
 }

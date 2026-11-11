@@ -1,5 +1,5 @@
 /**
- * Create ACTIVE daily-billing plans for Oct 30 SET UP.
+ * Create ACTIVE daily-billing plans for sandbox seed.
  *
  * Plans:
  *  - rr-daily-standard: DAY / $5 — used for drained-balance & card-removed buyers

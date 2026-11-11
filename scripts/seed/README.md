@@ -1,13 +1,14 @@
-# Oct 30 SET UP — sandbox seed scripts
+# Sandbox seed scripts
 
-**Mode:** SET UP only. **Nov 3** decides go/no-go on real `outstanding_balance > 0`.  
-**Never** treat Webhooks Simulator as money proof.
+Create PayPal sandbox catalog, daily plans, and subscription shells for the recovery desk.
+
+**Never** treat Webhooks Simulator as money proof. Prefer shells with real Billing `outstanding_balance > 0` (SUSPENDED after a failed setup-fee charge on a drained buyer).
 
 ## Prerequisites
 
 1. Same-country sandbox **business** (merchant) + **personal** (buyer) accounts.
 2. Sandbox app credentials; enable **Transaction Search** on the app if available.
-3. Copy `.env.example` → `.env.local` and fill:
+3. Copy `.env.example` → `.env` (or `.env.local`) and fill:
 
 | Var | Required | Purpose |
 | --- | --- | --- |
@@ -21,7 +22,7 @@
 ## Commands
 
 ```bash
-# Full API portion (catalog → daily plans → 4 subscription shells)
+# Full API portion (catalog → daily plans → subscription shells)
 npm run seed:all
 
 # Or stepwise
@@ -32,14 +33,14 @@ npm run seed:subs
 # After buyers approve in browser
 node scripts/seed/seed-subscriptions.mjs --refresh
 
-# Daily through Nov 3
+# Snapshot outstanding / status for listed shells
 npm run check:daily
 
 # Signature-verifying webhook listener (tunnel required)
 npm run webhook:dev
 ```
 
-Ids land in `fixtures/seed-ids.json` (gitignored pattern recommended once secrets-adjacent). Daily snapshots: `fixtures/daily-checks/YYYY-MM-DD.json`.
+Ids land in `fixtures/seed-ids.json` (gitignored). Copy shape from `fixtures/seed-ids.template.json`.
 
 ## Failure paths (manual buyer steps)
 
@@ -47,15 +48,16 @@ Ids land in `fixtures/seed-ids.json` (gitignored pattern recommended once secret
 | --- | --- | --- |
 | `drained-balance` | standard (DAY $5, threshold 1) | Approve with buyer that has empty/insufficient balance + declining card |
 | `card-removed` | standard | Approve, then remove funding instrument in sandbox wallet |
-| `setup-fee-continue` | setupFee (setup_fee $1 + CONTINUE + auto_bill_outstanding + threshold 1) | **Money-proof history** `I-J8R13K0F76X4` — keep listed; do not re-use for judge capture |
-| `drained-balance-2` | standard | Optional 4th drained path |
-| `judge-demo-outstanding` | setupFee (same plan) | Step 7: drain → approve (setup fee fails) → SUSPENDED+outstanding → restore funding; **do not capture** until demo |
+| `setup-fee-continue` | setupFee (setup_fee $1 + CONTINUE + auto_bill_outstanding + threshold 1) | Money-proof history `I-J8R13K0F76X4` — keep listed; do not re-use for judge capture |
+| `drained-balance-2` | standard | Optional extra drained path |
+| `judge-demo-outstanding` | setupFee (same plan) | Drain → approve (setup fee fails) → SUSPENDED+outstanding → restore funding; **do not capture** until demo |
 
 ```bash
 # Create only the judge-demo shell (keeps existing ids)
 node scripts/seed/seed-subscriptions.mjs --demo-outstanding
+```
 
-## Step 3 — four outstanding setupFee shells
+### Outstanding batch (setupFee shells)
 
 ```bash
 npm run seed:outstanding-batch
@@ -63,19 +65,18 @@ npm run seed:outstanding-batch
 node scripts/seed/seed-subscriptions.mjs --outstanding-batch --force
 ```
 
-Keys: `outstanding-smoke`, `outstanding-film`, `outstanding-judge-1`…`outstanding-judge-4` (six shells for spare top-up).
+Keys: `outstanding-smoke`, `outstanding-film`, `outstanding-judge-1`…`outstanding-judge-4`.
 
 **Interactive (required for SUSPENDED + ~$5 outstanding):**
 
 1. **Drain first** (before opening any BA link): sandbox **Personal** buyer balance ~$0; remove working cards. Optional: add only declining test card `4556747948786484` (CCREJECT).
-2. Then open each approve URL → Agree & Subscribe.
+2. Open each approve URL → Agree & Subscribe.
 3. Expect **SUSPENDED + outstanding ≈ $5** (setup fee fails → CONTINUE). Approving while funded → ACTIVE / $0–$1 (wrong outcome — re-run `--outstanding-batch --force`).
 4. Restore funding without capturing → `--refresh` + `npm run check:daily`.
-5. **Gate before Vercel:** PayPal outstanding ≥ $5 **and** no prior COMPLETED USD ≥ $5 (first-$5 attribution). Then paste `SEED_SUBSCRIPTION_IDS`. Budget: smoke ≤1, film ≤1, leave the rest for judges.
+5. Before deploying seed ids: PayPal outstanding ≥ $5 **and** no prior COMPLETED USD ≥ $5 (first-$5 attribution). Then set `SEED_SUBSCRIPTION_IDS`. Budget: smoke ≤1, film ≤1, leave judge shells for visitors.
 
-Also set `DEMO_PASSCODE` (Approve/Deny use `timingSafeEqual`; never commit/log the value).
-```
+Also set a demo passcode for Approve/Deny (`timingSafeEqual`; never commit/log the value).
 
-## Nov 3 rule
+## Judge spare note
 
-Any seeded sub with real **`outstanding_balance > 0`** (Billing GET, not Simulator) → build Renewal Rescue. Else → cancel-save / plan-revision desk.
+**Brightline Studio** (`outstanding-judge-1` / historically `I-S5J71BPHJBT3`) should remain the prefer-to-leave spare after **Cedar Fitness** was used for the filmed recovery. Confirm live status with Refresh before approving.

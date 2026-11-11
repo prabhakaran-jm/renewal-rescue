@@ -20,10 +20,9 @@ export {
  * Verified balance-recovery board — derived from live PayPal subscription
  * transactions (not “MRR uplift”).
  *
- * Probe (GET …/I-J8R13K0F76X4/transactions, 2026-11-02):
- * - Two COMPLETED rows: $5.00 capture (7RG29592AA729850V) + $1.00 setup fee.
- * - No FAILED rows in the transactions list (failures show on subscription
- *   outstanding / failed_payments_count, not as txn status=FAILED here).
+ * Money-proof sub I-J8R13K0F76X4 typically shows two COMPLETED rows: a $5.00
+ * capture plus a $1.00 setup fee. Failures appear on subscription outstanding /
+ * failed_payments_count, not as txn status=FAILED in the transactions list.
  *
  * Attribution rule (recomputed each Refresh from the live txn list):
  * per subscription, only the **first** COMPLETED USD gross ≥ $5 counts as
@@ -31,9 +30,6 @@ export {
  * have no prior COMPLETED ≥ $5, so that first payment is the desk capture —
  * including after async NO_CONTENT Approve and on a fresh Vercel instance
  * with empty session memory.
- *
- * Live $16 ledger: 7RG29592AA729850V ($5) + 57J03146YN2648933 ($5) +
- * 8W0050137N871594H ($6 smoke).
  *
  * Undercounts double recoveries on the same subscription.
  *

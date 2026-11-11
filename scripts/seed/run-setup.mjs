@@ -1,5 +1,5 @@
 /**
- * Oct 30 SET UP orchestrator: catalog → daily plans → subscription shells.
+ * Seed orchestrator: catalog → daily plans → subscription shells.
  * Does NOT claim money proof. Buyer approve + failure methods remain manual.
  *
  * Usage: npm run seed:all
@@ -47,12 +47,12 @@ function main() {
   run("create-daily-plans.mjs");
   run("seed-subscriptions.mjs");
 
-  console.log("\nOct 30 SET UP API portion complete.");
+  console.log("\nSeed API portion complete.");
   console.log("Still required (manual):");
   console.log("  • Approve each subscription as a sandbox personal buyer");
   console.log("  • Apply failure methods (drain / remove card / setup-fee path)");
   console.log("  • Register webhook + run npm run webhook:dev with signature verify");
-  console.log("  • npm run check:daily through Nov 3");
+  console.log("  • npm run check:daily until outstanding_balance > 0 on target shells");
 }
 
 main();

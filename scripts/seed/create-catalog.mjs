@@ -45,7 +45,7 @@ async function main() {
     prefer: "return=representation",
     body: {
       name: "Renewal Rescue Seed Product",
-      description: "Oct 30 daily-billing sandbox seed for failed-renewal desk",
+      description: "Daily-billing sandbox seed for failed-renewal desk",
       type: "SERVICE",
       category: "SOFTWARE",
     },

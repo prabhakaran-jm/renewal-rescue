@@ -80,9 +80,9 @@ const DEMO_OUTSTANDING = {
 };
 
 /**
- * Step 3 / spare top-up: setupFee outstanding shells.
+ * Spare top-up: setupFee outstanding shells.
  * Roles: smoke/film disposable; judge-* leave for judges (do not Approve until needed).
- * Nov 5+: six shells so desk has 4–6 disposable spares after prior film/smoke spend.
+ * Batch creates six shells so the desk has disposable spares after film/smoke spend.
  */
 const OUTSTANDING_BATCH = [
   {
@@ -394,7 +394,7 @@ async function main() {
   console.log("  1. Open each approve URL in a distinct sandbox personal buyer");
   console.log("  2. Apply failure method (drain / remove card / leave setup-fee path)");
   console.log("  3. node scripts/seed/seed-subscriptions.mjs --refresh");
-  console.log("  4. npm run check:daily  (through Nov 3)");
+  console.log("  4. npm run check:daily");
   return ids;
 }
 
