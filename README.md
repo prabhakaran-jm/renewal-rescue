@@ -1,5 +1,10 @@
 # Renewal Rescue
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Demo](https://img.shields.io/badge/Demo-Vercel-black.svg)](https://renewal-rescue.vercel.app)
+[![PayPal](https://img.shields.io/badge/PayPal-Sandbox-0070BA.svg)](https://developer.paypal.com/)
+[![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-4285F4.svg)](https://ai.google.dev/)
+
 A merchant recovery desk for **involuntary** PayPal subscription payment failures. When a billing charge fails and the subscription is suspended with an outstanding balance, Gemini proposes a capture or revise; deterministic policy gates it; a human merchant Approves. Live money moves only on Approve.
 
 **Live demo:** [https://renewal-rescue.vercel.app](https://renewal-rescue.vercel.app)
